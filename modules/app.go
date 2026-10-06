@@ -62,6 +62,7 @@ func Run(trayIcon []byte) {
 	defer lock.Close()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	go p.trackVLCFolder(ctx)
 	s := &service{paths: p, status: "Starting", refresh: make(chan struct{}, 1), buildIndex: make(chan struct{}, 1)}
 	done := make(chan error, 1)
 	go func() { done <- s.run(ctx); cancel() }()

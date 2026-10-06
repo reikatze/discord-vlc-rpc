@@ -117,3 +117,8 @@ and using the effective ID for playback. Windows folder actions use ShellExecute
 with thread-scoped COM initialization instead of waiting for Explorer's exit.
 Race tests, vet, and six cross-builds pass; actual notification display and folder
 opening still require a Windows desktop retest.
+
+Remembered VLC folder tests cover Windows, macOS and Linux process fixtures,
+process exit and application restart, explicit overrides, configuration-profile
+isolation, deleted folders, and malformed state. The installation folder is
+stored independently from profile settings and refreshed in a background loop.

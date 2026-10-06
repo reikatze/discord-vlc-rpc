@@ -41,17 +41,6 @@ func defaultPaths() paths {
 	}
 	return p
 }
-func (p paths) vlcFolder() string {
-	if !p.vlcExplicit {
-		pinned := p
-		pinned.configExplicit, pinned.configFileExplicit = true, true
-		pinned.configFile = p.vlcConfigFile()
-		if found, err := discoverPaths(pinned); err == nil && found.vlc != "" {
-			return found.vlc
-		}
-	}
-	return p.vlc
-}
 func openFolder(path string) error {
 	if path == "" {
 		return fmt.Errorf("VLC folder not found; start with --vlc-dir pointing to your VLC installation")

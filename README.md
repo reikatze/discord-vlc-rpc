@@ -85,6 +85,14 @@ For a custom application, you can upload square Rich Presence assets and set the
 | **Open VLC / database / configuration / metadata cache folder** | Opens the selected folder |
 | **Quit** | Clears activity and closes the app |
 
+**Open VLC folder** uses the running VLC executable's folder, then the last
+successfully detected folder if VLC is closed. An explicit `--vlc-dir` takes
+priority. The remembered folder is saved separately from VLC's configuration
+profile in `discord-vlc-rpc/last-vlc.json` beneath your user's configuration
+directory. Folder detection refreshes at startup, every ten seconds, and when
+you use this menu action. Deleted folders are ignored and normal installation
+discovery is used as a fallback.
+
 Status rows show **VLC HTTP**, **Discord Rich Presence**, **Playback**, **TMDb**, and **Database** information.
 
 Autostart is opt-in. It uses the Windows user Run registry key, macOS LaunchAgents, or Linux's per-user autostart directory and retains your selected VLC and configuration paths.
