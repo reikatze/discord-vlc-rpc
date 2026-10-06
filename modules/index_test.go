@@ -202,10 +202,13 @@ func TestIndexReaderPinsGenerationAndCloses(t *testing.T) {
 	}
 	files := reader.media["movie"]
 	reader.close()
-	if _, err := files.rows.Stat(); !errors.Is(err, os.ErrClosed) {
+	// Stat on a closed file returns a Windows handle error rather than ErrClosed.
+	// ReadAt checks the file's closed state consistently across platforms.
+	var probe [1]byte
+	if _, err := files.rows.ReadAt(probe[:], 0); !errors.Is(err, os.ErrClosed) {
 		t.Fatal("rows remain open", err)
 	}
-	if _, err := files.offsets.Stat(); !errors.Is(err, os.ErrClosed) {
+	if _, err := files.offsets.ReadAt(probe[:], 0); !errors.Is(err, os.ErrClosed) {
 		t.Fatal("offsets remain open", err)
 	}
 	if reader.candidates("Alpha", "movie") != nil {
