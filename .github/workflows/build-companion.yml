@@ -40,7 +40,12 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       - run: go run ./cmd/build release-go
+      - name: Generate SHA-256 checksums
+        working-directory: release-go
+        run: sha256sum *.zip > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
           name: companion-platform-packages
-          path: release-go/*.zip
+          path: |
+            release-go/*.zip
+            release-go/SHA256SUMS.txt
