@@ -274,32 +274,6 @@ Discord reconnects use increasing retry delays. On macOS and Linux, socket disco
 | Another app instance is already running | Quit it first; only one instance runs for each configuration profile |
 | Settings do not take effect | Check for invalid JSON or values, then choose **Refresh playback / metadata** |
 
-## Build and test
-
-Install Go 1.27.1 or newer, then run these commands from the `Source` root:
-
-```sh
-go test -race ./...
-go vet ./...
-go run ./cmd/build ../release-go
-```
-
-The source is organized as follows:
-
-| Path | Purpose |
-|---|---|
-| `main.go` | Executable entry point and embedded tray icon |
-| `modules/` | Application modules and their tests |
-| `cmd/build/` | Release-package builder |
-| `assets/` | Tray icon and documentation logos |
-| `.github/workflows/` | GitHub Actions tests and builds |
-
-The builder creates all six Windows, macOS, and Linux packages for x64 and ARM64. Each ZIP contains only the executable or, on macOS, a menu-bar app bundle. The build uses Go with CGO disabled.
-
-The included GitHub workflow tests on all three operating systems and builds all six packages. It does not publish a GitHub release.
-
-Tests use synthetic exports and mock VLC, TMDb, and Discord endpoints. No actual TMDb database is downloaded during development or validation. Live VLC/Discord IPC, tray, and login behavior still need target-desktop validation.
-
 ## Credits
 
 Movie and TV metadata and artwork are provided by TMDb. Square artwork fitting uses wsrv.nl when enabled. Dependency notices are available in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) in the source repository.
