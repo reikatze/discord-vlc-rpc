@@ -1,18 +1,21 @@
 name: Go companion
 on:
   push:
+    branches:
+      - '**'
     paths:
-      - '*.go'
-      - 'modules/**'
-      - 'cmd/**'
+      - '**/*.go'
       - 'go.mod'
       - 'go.sum'
-      - 'README.md'
-      - 'LICENSE'
-      - 'THIRD_PARTY_NOTICES.txt'
-      - 'assets/**'
+      - 'assets/icon.png'
       - '.github/workflows/build-companion.yml'
   pull_request:
+    paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'assets/icon.png'
+      - '.github/workflows/build-companion.yml'
   workflow_dispatch:
 permissions:
   contents: read
