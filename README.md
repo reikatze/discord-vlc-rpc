@@ -283,7 +283,7 @@ The source is organized as follows:
 | `assets/` | Tray icon and documentation logos |
 | `.github/workflows/` | GitHub Actions tests and builds |
 
-The builder creates all six Windows, macOS, and Linux packages for x64 and ARM64. macOS packages contain a menu-bar app bundle. The build uses Go with CGO disabled.
+The builder creates all six Windows, macOS, and Linux packages for x64 and ARM64. Each ZIP contains only the executable or, on macOS, a menu-bar app bundle. The build uses Go with CGO disabled.
 
 The included GitHub workflow tests on all three operating systems and builds all six packages. It does not publish a GitHub release.
 
@@ -291,7 +291,7 @@ Tests use synthetic exports and mock VLC, TMDb, and Discord endpoints. No actual
 
 ## Credits
 
-Movie and TV metadata and artwork are provided by TMDb. Square artwork fitting uses wsrv.nl when enabled. Dependency notices are included in `THIRD_PARTY_NOTICES.txt` in every release package.
+Movie and TV metadata and artwork are provided by TMDb. Square artwork fitting uses wsrv.nl when enabled. Dependency notices are available in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) in the source repository.
 
 Discord is a trademark of Discord Inc. This project is not affiliated with Discord, VideoLAN, or TMDb. It uses the TMDb API but is not endorsed or certified by TMDb.
 

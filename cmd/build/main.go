@@ -26,8 +26,9 @@ func main() {
 			name = "macos"
 		}
 		label := "discord-vlc-rpc-" + name + "-" + parts[1]
-		dir := filepath.Join(out, label)
-		must(os.MkdirAll(dir, 0755))
+		dir, err := os.MkdirTemp(out, label+"-")
+		must(err)
+		defer os.RemoveAll(dir)
 		exe := filepath.Join(dir, "discord-vlc-rpc")
 		if parts[0] == "windows" {
 			exe += ".exe"
@@ -47,17 +48,6 @@ func main() {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		must(cmd.Run())
-		for _, file := range []string{"LICENSE", "THIRD_PARTY_NOTICES.txt", "README.md"} {
-			b, e := os.ReadFile(file)
-			must(e)
-			must(os.WriteFile(filepath.Join(dir, filepath.Base(file)), b, 0644))
-		}
-		must(os.MkdirAll(filepath.Join(dir, "assets"), 0755))
-		for _, asset := range []string{"discord-logo.svg", "tmdb-logo.svg"} {
-			b, e := os.ReadFile(filepath.Join("assets", asset))
-			must(e)
-			must(os.WriteFile(filepath.Join(dir, "assets", asset), b, 0644))
-		}
 		f, e := os.Create(filepath.Join(out, label+".zip"))
 		must(e)
 		w := zip.NewWriter(f)

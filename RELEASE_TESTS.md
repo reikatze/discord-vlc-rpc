@@ -105,7 +105,7 @@ cached paths. Native IPC behavior still requires target-desktop validation.
 
 The Go project now builds from the Source root. A small root `main.go` embeds
 `assets/icon.png` and calls `modules.Run`; application logic and tests are in the
-`modules` package, while `cmd/build` creates release packages from root assets and
-documentation. Package relocation preserves platform build constraints and the
+`modules` package, while `cmd/build` creates release packages containing only
+the executable or macOS app bundle. Package relocation preserves platform build constraints and the
 tray's operating-system thread lock. Race tests, vet, six cross-builds and
 packaged Linux headless startup/shutdown were rechecked after the move.
