@@ -1,0 +1,46 @@
+name: Go companion
+on:
+  push:
+    paths:
+      - '*.go'
+      - 'modules/**'
+      - 'cmd/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'README.md'
+      - 'LICENSE'
+      - 'THIRD_PARTY_NOTICES.txt'
+      - 'assets/**'
+      - '.github/workflows/build-companion.yml'
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: go test ./...
+      - run: go vet ./...
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: go run ./cmd/build release-go
+      - uses: actions/upload-artifact@v4
+        with:
+          name: companion-platform-packages
+          path: release-go/*.zip
