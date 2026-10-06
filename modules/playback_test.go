@@ -39,6 +39,9 @@ func TestPlaybackHTTPMetadataPrivacyAndSeek(t *testing.T) {
 	if err != nil || parsed.Season != 2 || snapshot.Media["title"] != "Embedded Show" || number(snapshot.Playback, "position") != 12 {
 		t.Fatal(snapshot, parsed, err)
 	}
+	if snapshot.ApplicationID != c.discordApplicationID() || snapshot.ApplicationID == "" {
+		t.Fatal("missing effective Discord ID")
+	}
 	state = "paused"
 	position = 55
 	snapshot, _, err = client.sample(context.Background(), options, c)

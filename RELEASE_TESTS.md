@@ -109,3 +109,11 @@ The Go project now builds from the Source root. A small root `main.go` embeds
 the executable or macOS app bundle. Package relocation preserves platform build constraints and the
 tray's operating-system thread lock. Race tests, vet, six cross-builds and
 packaged Linux headless startup/shutdown were rechecked after the move.
+
+Startup notifications default to enabled and can be disabled in Settings. Tests
+cover saving both toggle values, loading configurations without the new option,
+omitting the built-in Discord ID from settings and JSON, retaining custom IDs,
+and using the effective ID for playback. Windows folder actions use ShellExecuteW
+with thread-scoped COM initialization instead of waiting for Explorer's exit.
+Race tests, vet, and six cross-builds pass; actual notification display and folder
+opening still require a Windows desktop retest.

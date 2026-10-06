@@ -25,7 +25,7 @@ func TestSettingsUIAuthenticationCSRFAndKeyPrivacy(t *testing.T) {
 	request.AddCookie(&http.Cookie{Name: "tracker-session", Value: "session-secret"})
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, request)
-	if w.Code != 200 || strings.Contains(w.Body.String(), c.APIKey) {
+	if w.Code != 200 || strings.Contains(w.Body.String(), c.APIKey) || strings.Contains(w.Body.String(), builtInApplicationID()) {
 		t.Fatal("key displayed")
 	}
 	form := url.Values{"csrf": {"session-secret"}, "appid": {"123"}, "language": {"en-US"}, "days": {"60"}, "fit": {"raw"}, "enabled": {"on"}}
@@ -52,5 +52,21 @@ func TestSettingsUIAuthenticationCSRFAndKeyPrivacy(t *testing.T) {
 	saved, _ := loadSettings(p)
 	if saved.APIKey != c.APIKey || saved.ApplicationID != "123" {
 		t.Fatal("key not retained")
+	}
+	form.Set("days", "60")
+	form.Set("appid", "")
+	form.Set("startup_notification", "on")
+	if w := post("http://127.0.0.1:12345"); w.Code != 200 || strings.Contains(w.Body.String(), builtInApplicationID()) {
+		t.Fatal("blank custom ID rejected or exposed default")
+	}
+	saved, err := loadSettings(p)
+	if err != nil || saved.ApplicationID != "" || !saved.StartupNotification || saved.discordApplicationID() == "" {
+		t.Fatal("default ID or notification preference", saved, err)
+	}
+	form.Del("startup_notification")
+	post("http://127.0.0.1:12345")
+	saved, err = loadSettings(p)
+	if err != nil || saved.StartupNotification {
+		t.Fatal("notification toggle not saved", err)
 	}
 }

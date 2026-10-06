@@ -85,6 +85,41 @@ func TestSettingsDefaultsPersistenceAndValidation(t *testing.T) {
 		t.Fatal("invalid config saved")
 	}
 }
+
+func TestBuiltInIDAndStartupNotificationSettings(t *testing.T) {
+	p := paths{config: t.TempDir()}
+	// A configuration without the new preference keeps notifications enabled.
+	legacy, err := json.Marshal(map[string]any{"discord_application_id": builtInApplicationID(), "tmdb_api_key": "keep-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWrite(p.settingsFile(), legacy, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := initSettings(p); err != nil {
+		t.Fatal(err)
+	}
+	c, err := loadSettings(p)
+	if err != nil || c.ApplicationID != "" || c.discordApplicationID() == "" || !c.StartupNotification || c.APIKey != "keep-key" {
+		t.Fatal("built-in defaults or migration", c, err)
+	}
+	body, err := os.ReadFile(p.settingsFile())
+	if err != nil || strings.Contains(string(body), builtInApplicationID()) || strings.Contains(string(body), "discord_application_id") {
+		t.Fatal("built-in ID persisted", err)
+	}
+	c.ApplicationID, c.StartupNotification = "123", false
+	if err := saveSettings(p, c); err != nil {
+		t.Fatal(err)
+	}
+	c, err = loadSettings(p)
+	if err != nil || c.discordApplicationID() != "123" || c.StartupNotification {
+		t.Fatal("custom settings lost", c, err)
+	}
+	c.ApplicationID = "invalid-id"
+	if saveSettings(p, c) == nil {
+		t.Fatal("invalid application ID accepted")
+	}
+}
 func TestServiceHeadlessShutdown(t *testing.T) {
 	p := paths{config: t.TempDir()}
 	if err := initSettings(p); err != nil {

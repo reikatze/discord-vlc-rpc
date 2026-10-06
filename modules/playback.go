@@ -140,7 +140,7 @@ func (c *playbackClient) sample(ctx context.Context, options map[string]string, 
 	if status.State == "stopped" {
 		c.clock = playbackClock{}
 		c.uri = ""
-		return &Snapshot{Version: 3, Updated: float64(c.time().UnixNano()) / 1e9, ApplicationID: config.ApplicationID, Media: map[string]any{"title": "VLC", "state": "idle"}, Playback: map[string]any{}, Options: activityOptions(config)}, parsedMedia{}, nil
+		return &Snapshot{Version: 3, Updated: float64(c.time().UnixNano()) / 1e9, ApplicationID: config.discordApplicationID(), Media: map[string]any{"title": "VLC", "state": "idle"}, Playback: map[string]any{}, Options: activityOptions(config)}, parsedMedia{}, nil
 	}
 	if status.State != "playing" && status.State != "paused" && status.State != "buffering" {
 		return nil, parsedMedia{}, errors.New("Unknown VLC playback state")
@@ -171,7 +171,7 @@ func (c *playbackClient) sample(ctx context.Context, options map[string]string, 
 	if title == "" {
 		title = filepath.Base(path)
 	}
-	s := &Snapshot{Version: 3, Updated: float64(c.time().UnixNano()) / 1e9, ApplicationID: config.ApplicationID, Media: map[string]any{"uri": c.uri, "title": title, "state": status.State, "artist": text(meta, "artist")}, Playback: map[string]any{"position": status.Time, "duration": status.Length, "rate": status.Rate}, Options: activityOptions(config)}
+	s := &Snapshot{Version: 3, Updated: float64(c.time().UnixNano()) / 1e9, ApplicationID: config.discordApplicationID(), Media: map[string]any{"uri": c.uri, "title": title, "state": status.State, "artist": text(meta, "artist")}, Playback: map[string]any{"position": status.Time, "duration": status.Length, "rate": status.Rate}, Options: activityOptions(config)}
 	if parsed.TV {
 		s.Media["episode"] = fmt.Sprintf("S%02d · Episode %02d", parsed.Season, parsed.Episode)
 	}

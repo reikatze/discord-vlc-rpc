@@ -3,10 +3,8 @@ package modules
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 )
 
 type paths struct {
@@ -61,20 +59,7 @@ func openFolder(path string) error {
 	if err := os.MkdirAll(path, 0700); err != nil {
 		return err
 	}
-	name := "xdg-open"
-	args := []string{path}
-	if runtime.GOOS == "windows" {
-		name = "explorer.exe"
-	} else if runtime.GOOS == "darwin" {
-		name = "open"
-		if strings.HasSuffix(path, ".app") {
-			path = filepath.Join(path, "Contents")
-		}
-		args = []string{path}
-	}
-	cmd := exec.Command(name, args...)
-	configureChild(cmd)
-	return cmd.Run()
+	return openFolderPlatform(path)
 }
 
 func isDirectory(path string) bool { info, err := os.Stat(path); return err == nil && info.IsDir() }

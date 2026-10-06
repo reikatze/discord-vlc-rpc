@@ -65,7 +65,7 @@ For the full experience, open **Settings…** in the tray menu and save your TMD
 
 HTTP setup preserves unrelated VLC preferences, an existing password, and other interfaces. It creates a password if needed, saves a timestamped backup of an existing VLC configuration file, and configures new HTTP access on `127.0.0.1`. A working HTTP configuration is preserved. VLC preferences change only when you select the setup action.
 
-The app includes a Discord Application ID, so you can leave that setting at its default. To use your own application, create one in the [Discord Developer Portal](https://discord.com/developers/applications) and save its ID in **Settings…** or `discord_application_id` in the configuration file.
+The app uses a built-in Discord application when the optional custom application ID is blank. The built-in ID is not displayed in settings or saved in the configuration file. To use your own application, create one in the [Discord Developer Portal](https://discord.com/developers/applications) and save its ID in **Settings…** or `discord_application_id` in the configuration file.
 
 For a custom application, you can upload square Rich Presence assets and set their names in `large_image`, `small_image_playing`, `small_image_paused`, and `small_image_idle`. These asset names are empty by default.
 
@@ -91,11 +91,14 @@ Autostart is opt-in. It uses the Windows user Run registry key, macOS LaunchAgen
 
 ## Configuration
 
+The startup notification is enabled by default. Turn off **Show a notification when the app starts** in Settings to disable it. Headless mode does not show notifications.
+
 The defaults should be fine for most people. Use **Settings…** to change them, or edit `discord-vlc-rpc/config.json` beneath VLC's configuration directory. Changes reload automatically; **Refresh playback / metadata** also forces a reload.
 
 | Option | Default | What it controls |
 |---|---|---|
-| `discord_application_id` | built in | Discord Application ID; keep the included value or supply your own |
+| `discord_application_id` | omitted | Optional custom Discord application ID; blank uses the built-in application |
+| `startup_notification` | `true` | Shows a notification that the app has started and is running in the tray |
 | `tmdb_api_key` | empty | Enables TMDb titles, episode data, links, and artwork |
 | `tmdb_language` | `en-US` | Language used for TMDb searches and metadata |
 | `tmdb_episode_lookup` | `true` | Looks up the exact parsed season and episode |

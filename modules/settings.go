@@ -4,30 +4,47 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 type settings struct {
-	Enabled       bool     `json:"enabled"`
-	ApplicationID string   `json:"discord_application_id"`
-	APIKey        string   `json:"tmdb_api_key"`
-	Language      string   `json:"tmdb_language"`
-	EpisodeLookup bool     `json:"tmdb_episode_lookup"`
-	CacheDays     int      `json:"tmdb_positive_cache_days"`
-	IndexEnabled  bool     `json:"tmdb_local_index"`
-	IndexPath     string   `json:"tmdb_index_path"`
-	CachePath     string   `json:"metadata_cache_path"`
-	PosterFit     string   `json:"poster_fit"`
-	Ignored       []string `json:"ignored_paths"`
-	LargeImage    string   `json:"large_image"`
-	LargeText     string   `json:"large_text"`
-	SmallPlaying  string   `json:"small_image_playing"`
-	SmallPaused   string   `json:"small_image_paused"`
-	SmallIdle     string   `json:"small_image_idle"`
+	Enabled             bool     `json:"enabled"`
+	ApplicationID       string   `json:"discord_application_id,omitempty"`
+	StartupNotification bool     `json:"startup_notification"`
+	APIKey              string   `json:"tmdb_api_key"`
+	Language            string   `json:"tmdb_language"`
+	EpisodeLookup       bool     `json:"tmdb_episode_lookup"`
+	CacheDays           int      `json:"tmdb_positive_cache_days"`
+	IndexEnabled        bool     `json:"tmdb_local_index"`
+	IndexPath           string   `json:"tmdb_index_path"`
+	CachePath           string   `json:"metadata_cache_path"`
+	PosterFit           string   `json:"poster_fit"`
+	Ignored             []string `json:"ignored_paths"`
+	LargeImage          string   `json:"large_image"`
+	LargeText           string   `json:"large_text"`
+	SmallPlaying        string   `json:"small_image_playing"`
+	SmallPaused         string   `json:"small_image_paused"`
+	SmallIdle           string   `json:"small_image_idle"`
 }
 
 func defaults() settings {
-	return settings{Enabled: true, ApplicationID: "1552412285589520504", Language: "en-US", EpisodeLookup: true, CacheDays: 60, IndexEnabled: true, PosterFit: "contain", LargeText: "VLC", Ignored: []string{}}
+	return settings{Enabled: true, StartupNotification: true, Language: "en-US", EpisodeLookup: true, CacheDays: 60, IndexEnabled: true, PosterFit: "contain", LargeText: "VLC", Ignored: []string{}}
+}
+
+// The built-in public Discord identifier stays separate from user configuration.
+func builtInApplicationID() string { return strconv.FormatUint(0x158b46bfab840078, 10) }
+func (c settings) discordApplicationID() string {
+	if c.ApplicationID == "" {
+		return builtInApplicationID()
+	}
+	return c.ApplicationID
+}
+func (c *settings) normalizeApplicationID() {
+	c.ApplicationID = strings.TrimSpace(c.ApplicationID)
+	if c.ApplicationID == builtInApplicationID() {
+		c.ApplicationID = ""
+	}
 }
 func (p paths) settingsFolder() string { return filepath.Join(p.config, "discord-vlc-rpc") }
 func (p paths) settingsFile() string   { return filepath.Join(p.settingsFolder(), "config.json") }
@@ -44,7 +61,7 @@ func (p paths) cacheFolder(c settings) string {
 	return filepath.Join(p.settingsFolder(), "metadata-cache")
 }
 func validateSettings(c settings) error {
-	if c.ApplicationID == "" || strings.Trim(c.ApplicationID, "0123456789") != "" {
+	if strings.Trim(c.ApplicationID, "0123456789") != "" {
 		return errors.New("Discord application ID must contain digits")
 	}
 	if c.CacheDays < 1 || c.CacheDays > 3650 {
@@ -69,9 +86,11 @@ func loadSettings(p paths) (settings, error) {
 	if err != nil {
 		return c, err
 	}
+	c.normalizeApplicationID()
 	return c, validateSettings(c)
 }
 func saveSettings(p paths, c settings) error {
+	c.normalizeApplicationID()
 	if err := validateSettings(c); err != nil {
 		return err
 	}
@@ -83,8 +102,19 @@ func saveSettings(p paths, c settings) error {
 }
 func initSettings(p paths) error {
 	if exists(p.settingsFile()) {
-		_, err := loadSettings(p)
-		return err
+		c := defaults()
+		if err := readJSON(p.settingsFile(), 65536, &c); err != nil {
+			return err
+		}
+		originalID := c.ApplicationID
+		c.normalizeApplicationID()
+		if err := validateSettings(c); err != nil {
+			return err
+		}
+		if c.ApplicationID != originalID {
+			return saveSettings(p, c)
+		}
+		return nil
 	}
 	return saveSettings(p, defaults())
 }

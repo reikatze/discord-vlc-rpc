@@ -161,6 +161,9 @@ func Run(trayIcon []byte) {
 		menu.AddSeparator()
 		menu.Add("Quit", cancel)
 		tray.SetIcon(trayIcon).SetAppName("discord-vlc-rpc").SetTooltip("discord-vlc-rpc").SetMenu(menu).Show()
+		if c.StartupNotification {
+			tray.ShowNotification("discord-vlc-rpc", "discord-vlc-rpc has started and is running in the system tray.")
+		}
 		go func() {
 			settingsCache := cachedFile[settings]{path: s.paths.settingsFile(), load: func() (settings, error) { return loadSettings(s.paths) }}
 			labels := map[*systray.MenuItem]string{rpc: "Discord Rich Presence: Starting", playback: "Playback: Waiting for VLC", metadata: "TMDb: Filename only", index: "Database: Waiting"}

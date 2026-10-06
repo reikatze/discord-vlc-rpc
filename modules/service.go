@@ -74,7 +74,7 @@ func (s *service) run(parent context.Context) error {
 	}
 	updates := make(chan desired, 1)
 	done := make(chan struct{})
-	initialApp := c.ApplicationID
+	initialApp := c.discordApplicationID()
 	go func() {
 		defer close(done)
 		r := &discordRPC{dial: s.rpcDial}
@@ -104,7 +104,7 @@ func (s *service) run(parent context.Context) error {
 		}
 	}()
 	publish := func(activity map[string]any) {
-		d := desired{c.ApplicationID, activity}
+		d := desired{c.discordApplicationID(), activity}
 		select {
 		case updates <- d:
 		default:
