@@ -1,7 +1,9 @@
 package modules
 
 import (
+	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"io"
 	"net"
 	"testing"
@@ -84,5 +86,74 @@ func TestFrameLimitsErrorsAndReadDeadline(t *testing.T) {
 	v, e := r.receive(10 * time.Millisecond)
 	if e != nil || v != nil || time.Since(start) > time.Second {
 		t.Fatal("read unbounded", e)
+	}
+}
+
+var rpcReadTimeout = &net.DNSError{IsTimeout: true}
+
+type recordingRPCConnection struct {
+	data          bytes.Buffer
+	writes, reads int
+}
+
+func (c *recordingRPCConnection) Read([]byte) (int, error) { c.reads++; return 0, rpcReadTimeout }
+func (c *recordingRPCConnection) Write(body []byte) (int, error) {
+	c.writes++
+	return c.data.Write(body)
+}
+func (c *recordingRPCConnection) Close() error                     { return nil }
+func (c *recordingRPCConnection) LocalAddr() net.Addr              { return &net.TCPAddr{} }
+func (c *recordingRPCConnection) RemoteAddr() net.Addr             { return &net.TCPAddr{} }
+func (c *recordingRPCConnection) SetDeadline(time.Time) error      { return nil }
+func (c *recordingRPCConnection) SetReadDeadline(time.Time) error  { return nil }
+func (c *recordingRPCConnection) SetWriteDeadline(time.Time) error { return nil }
+
+func TestCachedRPCActivityDeduplicationHeartbeatAndClear(t *testing.T) {
+	connection := &recordingRPCConnection{}
+	r := &discordRPC{connection: connection, app: "123"}
+	activity := `{"details":"Movie","timestamps":{"start":123}}`
+	r.update("123", activity)
+	if connection.writes != 1 {
+		t.Fatal("initial activity missing")
+	}
+	frame := connection.data.Bytes()
+	var command map[string]any
+	if err := json.Unmarshal(frame[8:], &command); err != nil {
+		t.Fatal(err)
+	}
+	value, ok := command["args"].(map[string]any)["activity"].(map[string]any)
+	if !ok || value["details"] != "Movie" {
+		t.Fatal("cached JSON sent as string rather than object", command)
+	}
+	for i := 0; i < 100; i++ {
+		r.update("123", activity)
+	}
+	if connection.writes != 1 || connection.reads != 101 {
+		t.Fatal("duplicate sent or connection checks skipped", connection.writes, connection.reads)
+	}
+	r.timeSent = time.Now().Add(-31 * time.Second)
+	r.update("123", activity)
+	if connection.writes != 2 {
+		t.Fatal("heartbeat resend missing")
+	}
+	r.update("123", "")
+	if connection.writes != 3 || r.last != "null" || r.status != "Connected — presence cleared" {
+		t.Fatal("clear failed")
+	}
+	r.close()
+	r.connection = connection
+	r.update("123", "null")
+	if connection.writes != 4 {
+		t.Fatal("clear was not replayed on reconnect")
+	}
+}
+
+func BenchmarkRPCUnchangedActivity(b *testing.B) {
+	activity := `{"details":"Movie","timestamps":{"start":123}}`
+	r := &discordRPC{connection: &recordingRPCConnection{}, app: "123", last: activity, timeSent: time.Now()}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r.update("123", activity)
 	}
 }

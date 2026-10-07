@@ -255,6 +255,14 @@ func TestVLCPollBackoffAndRecovery(t *testing.T) {
 	if p.interval() != 500*time.Millisecond {
 		t.Fatal("recovery did not restore active interval")
 	}
+	p.stopped()
+	if p.interval() != 2*time.Second {
+		t.Fatal("stopped interval")
+	}
+	p.success()
+	if p.interval() != 500*time.Millisecond {
+		t.Fatal("stopped recovery")
+	}
 }
 
 func TestPollingBackoffRefreshAndActiveRecovery(t *testing.T) {
@@ -320,5 +328,75 @@ func TestPollingBackoffRefreshAndActiveRecovery(t *testing.T) {
 	fourth := next(time.Second)
 	if fourth.Sub(third) < 400*time.Millisecond || fourth.Sub(third) > time.Second {
 		t.Fatal("active polling interval not restored", fourth.Sub(third))
+	}
+}
+
+func TestStoppedPollingRefreshAndPlaybackRecovery(t *testing.T) {
+	var playing atomic.Bool
+	samples := make(chan time.Time, 16)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/requests/status.json" {
+			samples <- time.Now()
+			state := "stopped"
+			if playing.Load() {
+				state = "playing"
+			}
+			fmt.Fprintf(w, `{"version":"3","apiversion":3,"state":%q,"time":10,"length":100,"rate":1,"currentplid":1,"information":{"category":{"meta":{"filename":"Movie.mkv"}}}}`, state)
+		} else {
+			fmt.Fprint(w, `{"children":[{"id":1,"uri":"file:///media/Movie.mkv"}]}`)
+		}
+	}))
+	defer server.Close()
+	p := paths{config: t.TempDir()}
+	if err := initSettings(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWrite(filepath.Join(p.config, "vlcrc"), []byte("http-port="+strings.Split(server.URL, ":")[2]+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := &service{paths: p, refresh: make(chan struct{}, 1), buildIndex: make(chan struct{}, 1), rpcDial: func() (net.Conn, error) { return nil, errors.New("test offline") }}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("shutdown blocked")
+		}
+	}()
+	next := func(timeout time.Duration) time.Time {
+		select {
+		case at := <-samples:
+			return at
+		case <-time.After(timeout):
+			t.Fatal("missing VLC sample")
+			return time.Time{}
+		}
+	}
+	first, second := next(5*time.Second), next(5*time.Second)
+	if second.Sub(first) < 1800*time.Millisecond {
+		t.Fatal("stopped polling not slowed", second.Sub(first))
+	}
+	// Wait until the second stopped sample has been applied before waking it.
+	limit := time.Now().Add(time.Second)
+	for time.Now().Before(limit) {
+		playback, _, _, _, _ := s.details()
+		if playback == "Idle" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	playing.Store(true)
+	at := time.Now()
+	poke(s.refresh)
+	third := next(time.Second)
+	if third.Sub(at) > time.Second {
+		t.Fatal("refresh waited for stopped interval")
+	}
+	fourth := next(1500 * time.Millisecond)
+	if fourth.Sub(third) < 400*time.Millisecond || fourth.Sub(third) > 1500*time.Millisecond {
+		t.Fatal("playback interval not restored", fourth.Sub(third))
 	}
 }

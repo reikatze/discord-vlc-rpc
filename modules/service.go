@@ -50,7 +50,7 @@ func poke(ch chan struct{}) {
 
 type desired struct {
 	app      string
-	activity map[string]any
+	activity string
 }
 type lookupResult struct {
 	key      string
@@ -104,7 +104,12 @@ func (s *service) run(parent context.Context) error {
 		}
 	}()
 	publish := func(activity map[string]any) {
-		d := desired{c.discordApplicationID(), activity}
+		body, err := json.Marshal(activity)
+		if err != nil {
+			// Clear rather than leave an obsolete activity if encoding fails.
+			body = []byte("null")
+		}
+		d := desired{c.discordApplicationID(), string(body)}
 		select {
 		case updates <- d:
 		default:
@@ -251,6 +256,9 @@ func (s *service) run(parent context.Context) error {
 			continue
 		}
 		poll.success()
+		if snapshot != nil && text(snapshot.Media, "state") == "idle" {
+			poll.stopped()
+		}
 		if snapshot == nil {
 			cancelLookup()
 			key = ""
@@ -363,6 +371,7 @@ func (p *vlcPollBackoff) interval() time.Duration {
 	return p.delay
 }
 func (p *vlcPollBackoff) success() { p.delay = 0 }
+func (p *vlcPollBackoff) stopped() { p.delay = 2 * time.Second }
 func (p *vlcPollBackoff) failed() {
 	p.delay = p.interval() * 2
 	if p.delay > 5*time.Second {

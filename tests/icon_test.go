@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 )
 
 func TestGeneratedTrayIcon(t *testing.T) {
@@ -133,5 +134,79 @@ func TestLinuxApplicationLauncher(t *testing.T) {
 	}
 	if !bytes.Contains(desktopEntry(args, icon, true), []byte("Icon="+icon+"\n")) {
 		t.Fatal("autostart icon differs")
+	}
+}
+
+func TestLinuxLauncherSkipsUnchangedFilesAndRepairsChanges(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux desktop integration")
+	}
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
+	args := []string{"/first/discord-vlc-rpc", "--config-dir", "/profile"}
+	if err := installDesktopIcon(args); err != nil {
+		t.Fatal(err)
+	}
+	icon, err := desktopIconPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(root, "data", "applications", "discord-vlc-rpc.desktop")
+	stamp := time.Unix(1234567890, 0)
+	before := make(map[string]os.FileInfo)
+	for _, path := range []string{icon, launcher} {
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[path] = info
+	}
+	if err := installDesktopIcon(args); err != nil {
+		t.Fatal(err)
+	}
+	for path, info := range before {
+		after, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !os.SameFile(info, after) || !after.ModTime().Equal(info.ModTime()) {
+			t.Fatal("identical file rewritten", path)
+		}
+	}
+	args[0] = "/moved/discord-vlc-rpc"
+	args[2] = "/new-profile"
+	if err := installDesktopIcon(args); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(icon)
+	if err != nil || !os.SameFile(before[icon], after) {
+		t.Fatal("launcher update rewrote icon", err)
+	}
+	body, err := os.ReadFile(launcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(body, []byte(`/moved/discord-vlc-rpc`)) || !bytes.Contains(body, []byte(`/new-profile`)) {
+		t.Fatal("launcher not updated")
+	}
+	if err := os.WriteFile(icon, []byte("corrupt"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(launcher); err != nil {
+		t.Fatal(err)
+	}
+	if err := installDesktopIcon(args); err != nil {
+		t.Fatal(err)
+	}
+	body, err = os.ReadFile(icon)
+	if err != nil || !bytes.Equal(body, IconPNG(256)) {
+		t.Fatal("damaged icon not repaired", err)
+	}
+	if _, err := os.Stat(launcher); err != nil {
+		t.Fatal("missing launcher not restored", err)
 	}
 }

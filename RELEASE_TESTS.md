@@ -124,3 +124,5 @@ isolation, deleted folders, and malformed state. The installation folder is
 stored independently from profile settings and refreshed in a background loop.
 
 Application icons use the same procedural drawing as the tray. Container tests decode all macOS ICNS representations and inspect Windows COFF resources for both architectures. Linux launcher tests verify the generated icon, preserved arguments, and autostart icon. All six release packages were rebuilt and inspected for linked Windows resource entries and macOS bundle icon metadata. Live Explorer/Finder/desktop icon display still needs validation on those systems.
+
+Discord activity JSON is now encoded once per published playback update and reused between updates. Regression coverage verifies deduplication, connection checks, the 30-second resend, clearing, and reconnect replay. Stopped VLC uses a two-second polling interval; HTTP integration coverage verifies idle pacing, immediate manual refresh, and recovery to half-second playback polling. Linux icon/launcher tests verify unchanged file identity and timestamps, updates after executable/argument changes, and repair of missing or damaged files.

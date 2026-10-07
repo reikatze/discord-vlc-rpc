@@ -1,6 +1,8 @@
 package modules
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -33,10 +35,32 @@ func installDesktopIcon(args []string) error {
 		}
 		base = filepath.Join(home, ".local", "share")
 	}
-	if err := atomicWrite(icon, IconPNG(256), 0644); err != nil {
+	if err := writeDesktopFileIfChanged(icon, IconPNG(256)); err != nil {
 		return err
 	}
-	return atomicWrite(filepath.Join(base, "applications", "discord-vlc-rpc.desktop"), desktopEntry(args, icon, false), 0644)
+	return writeDesktopFileIfChanged(filepath.Join(base, "applications", "discord-vlc-rpc.desktop"), desktopEntry(args, icon, false))
+}
+
+// Limit the comparison to the expected size, then replace missing or different
+// content atomically. Identical files keep their modification time and inode.
+func writeDesktopFileIfChanged(path string, body []byte) error {
+	file, err := os.Open(path)
+	if err == nil {
+		existing, readErr := io.ReadAll(io.LimitReader(file, int64(len(body))+1))
+		closeErr := file.Close()
+		if readErr != nil {
+			return readErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		if bytes.Equal(existing, body) {
+			return nil
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return atomicWrite(path, body, 0644)
 }
 
 func desktopArg(s string) string {

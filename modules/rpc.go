@@ -104,7 +104,12 @@ func (r *discordRPC) fail(err error) {
 		r.retry = 60 * time.Second
 	}
 }
-func (r *discordRPC) update(app string, activity map[string]any) {
+
+// activity is immutable JSON encoded once when playback publishes an update.
+func (r *discordRPC) update(app string, activity string) {
+	if activity == "" {
+		activity = "null"
+	}
 	if app != "" && app != r.app {
 		r.close()
 		r.app = app
@@ -166,20 +171,18 @@ func (r *discordRPC) update(app string, activity map[string]any) {
 			break
 		}
 	}
-	body, _ := json.Marshal(activity)
-	key := string(body)
-	if key != r.last || time.Since(r.timeSent) > 30*time.Second {
+	if activity != r.last || time.Since(r.timeSent) > 30*time.Second {
 		r.nonce++
-		err := r.send(1, map[string]any{"cmd": "SET_ACTIVITY", "args": map[string]any{"pid": os.Getpid(), "activity": activity}, "nonce": fmt.Sprint(r.nonce)})
+		err := r.send(1, map[string]any{"cmd": "SET_ACTIVITY", "args": map[string]any{"pid": os.Getpid(), "activity": json.RawMessage(activity)}, "nonce": fmt.Sprint(r.nonce)})
 		if err != nil {
 			r.fail(err)
 			return
 		}
-		r.last = key
+		r.last = activity
 		r.timeSent = time.Now()
 	}
 	r.status = "Connected — presence cleared"
-	if activity != nil {
+	if activity != "null" {
 		r.status = "Connected — sharing playback"
 	}
 }
