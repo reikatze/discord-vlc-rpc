@@ -48,7 +48,7 @@ use TCP or in-memory mock transports. Live VLC/Discord IPC, Windows named pipes,
 platform tray/login behavior and optional ffprobe labels need target
 hardware validation. Signing and macOS notarization have not been performed.
 
-Reproduce from the Source root: `go test -race ./...`, `go vet ./...`, and
+Reproduce from the Source root: `go run ./cmd/test -race ./...`, `go run ./cmd/test vet ./...`, and
 `go run ./cmd/build ../release-go`.
 
 ## Local performance checks
@@ -64,13 +64,13 @@ versus 220 microseconds and 548 kB with repeated reads/parsing. These are local
 microbenchmarks, not estimates of overall application CPU usage or target-device
 performance. Polling still checks file identity, size and modification time.
 
-Reproduce with `go test ./modules -run '^$' -bench 'Benchmark(IndexBuild|VLCConfigurationPolling)' -benchmem`.
+Reproduce with `go run ./cmd/test ./modules -run '^$' -bench 'Benchmark(IndexBuild|VLCConfigurationPolling)' -benchmem`.
 
 Filename parsing microbenchmark (1,000 iterations on the same host): about
 11.9 microseconds and 53 allocations for parsing a representative episode path,
 versus zero allocations when reusing its cached result. Release-group regexes
 and the title separator replacer are now constructed once. Reproduce with
-`go test ./modules -run '^$' -bench BenchmarkFilenameParsing -benchmem`.
+`go run ./cmd/test ./modules -run '^$' -bench BenchmarkFilenameParsing -benchmem`.
 
 Periodic tray status labels and checkbox values update only when changed.
 Live tray behavior remains part of target-desktop validation.
@@ -95,7 +95,7 @@ previous implementation. This fixture has two tiny synthetic media indexes;
 timings varied substantially across runs. The measurements describe file/manifest
 reuse, not full-database performance or
 overall application CPU usage. Reproduce the current batch comparison with
-`go test ./modules -run '^$' -bench BenchmarkIndexCandidateBatch -benchmem`.
+`go run ./cmd/test ./modules -run '^$' -bench BenchmarkIndexCandidateBatch -benchmem`.
 
 Discord socket discovery on macOS/Linux shares a one-second overall deadline
 across all candidates, with a 50 ms per-attempt limit. The most recently connected
@@ -103,9 +103,9 @@ socket is tried first while it remains in the current directory scope. Failed
 cached sockets fall back to discovery, and failed searches invalidate stale
 cached paths. Native IPC behavior still requires target-desktop validation.
 
-The Go project now builds from the Source root. A small root `main.go` embeds
-`assets/icon.png` and calls `modules.Run`; application logic and tests are in the
-`modules` package, while `cmd/build` creates release packages containing only
+The Go project now builds from the Source root. A small root `main.go` generates the tray icon with
+`modules.TrayIcon()` and calls `modules.Run`; application logic is in `modules`
+and unit test sources are in `tests`, while `cmd/build` creates release packages containing only
 the executable or macOS app bundle. Package relocation preserves platform build constraints and the
 tray's operating-system thread lock. Race tests, vet, six cross-builds and
 packaged Linux headless startup/shutdown were rechecked after the move.
@@ -122,3 +122,5 @@ Remembered VLC folder tests cover Windows, macOS and Linux process fixtures,
 process exit and application restart, explicit overrides, configuration-profile
 isolation, deleted folders, and malformed state. The installation folder is
 stored independently from profile settings and refreshed in a background loop.
+
+Application icons use the same procedural drawing as the tray. Container tests decode all macOS ICNS representations and inspect Windows COFF resources for both architectures. Linux launcher tests verify the generated icon, preserved arguments, and autostart icon. All six release packages were rebuilt and inspected for linked Windows resource entries and macOS bundle icon metadata. Live Explorer/Finder/desktop icon display still needs validation on those systems.

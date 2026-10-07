@@ -77,6 +77,9 @@ func Run(trayIcon []byte) {
 			}
 		}
 		exe, _ := os.Executable()
+		if err := installDesktopIcon(append([]string{exe}, os.Args[1:]...)); err != nil {
+			fmt.Fprintln(os.Stderr, "Application icon:", err)
+		}
 		args := []string{exe, "--config-dir", p.config}
 		if p.configFile != "" && p.configFile != filepath.Join(p.config, "vlcrc") {
 			args = append(args, "--config-file", p.configFile)

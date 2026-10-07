@@ -1,14 +1,7 @@
 package main
 
-import (
-	_ "embed"
-
-	"discord-vlc-rpc/modules"
-)
-
-//go:embed assets/icon.png
-var trayIcon []byte
+import "discord-vlc-rpc/modules"
 
 func main() {
-	modules.Run(trayIcon)
+	modules.Run(modules.TrayIcon())
 }

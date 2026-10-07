@@ -22,11 +22,6 @@ func autostartPath() string {
 	return filepath.Join(base, "autostart/discord-vlc-rpc.desktop")
 }
 func autostartEnabled() bool { return exists(autostartPath()) }
-func desktopArg(s string) string {
-	s = strings.ReplaceAll(s, "%", "%%")
-	s = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "`", "\\`", "$", "\\$").Replace(s)
-	return strings.ReplaceAll(`"`+s+`"`, `\`, `\\`)
-}
 func autostartBody(args []string) []byte {
 	if runtime.GOOS == "darwin" {
 		var body strings.Builder
@@ -39,11 +34,8 @@ func autostartBody(args []string) []byte {
 		body.WriteString("</array><key>RunAtLoad</key><true/></dict></plist>\n")
 		return []byte(body.String())
 	}
-	quoted := make([]string, len(args))
-	for i, a := range args {
-		quoted[i] = desktopArg(a)
-	}
-	return []byte("[Desktop Entry]\nType=Application\nName=discord-vlc-rpc\nComment=VLC Discord presence companion\nExec=" + strings.Join(quoted, " ") + "\nTerminal=false\nX-GNOME-Autostart-enabled=true\n")
+	icon, _ := desktopIconPath()
+	return desktopEntry(args, icon, true)
 }
 func setAutostart(enabled bool, args []string) error {
 	path := autostartPath()

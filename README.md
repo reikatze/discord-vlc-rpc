@@ -274,6 +274,36 @@ Discord reconnects use increasing retry delays. On macOS and Linux, socket disco
 | Another app instance is already running | Quit it first; only one instance runs for each configuration profile |
 | Settings do not take effect | Check for invalid JSON or values, then choose **Refresh playback / metadata** |
 
+## Build and test
+
+Install Go 1.27.1 or newer, then run these commands from the `Source` root:
+
+```sh
+go run ./cmd/test -race ./...
+go run ./cmd/test vet ./...
+go run ./cmd/build ../release-go
+```
+
+The source is organized as follows:
+
+| Path | Purpose |
+|---|---|
+| `main.go` | Executable entry point |
+| `modules/` | Application modules, including the programmatically drawn tray icon |
+| `tests/` | Unit tests and platform fixtures |
+| `cmd/test/` | Test and vet runner using a temporary Go overlay |
+| `cmd/build/` | Release-package builder |
+| `assets/` | Documentation logos |
+| `.github/workflows/` | GitHub Actions tests and builds |
+
+The application and tray icons share the orange play-symbol design drawn by `modules/icon.go`; no checked-in PNG asset is required. The release builder embeds Windows icon resources and includes a generated macOS `icon.icns` inside the app bundle. On Linux, starting the tray creates a per-user application launcher in `$XDG_DATA_HOME/applications/` (or `~/.local/share/applications/`) and a generated icon in `$XDG_CONFIG_HOME/discord-vlc-rpc/icon.png` (or `~/.config/discord-vlc-rpc/icon.png`). The launcher preserves the original command-line arguments and is refreshed on each tray startup, so start the executable again after moving it. Headless startup does not create a launcher. Linux executable files themselves use the file manager's generic executable icon. The test runner loads `tests/*_test.go` into the `modules` package through a temporary overlay so unit tests can exercise private helpers without exporting them. `tests/go.mod` keeps those source files out of the normal application package walk. Use `cmd/test` for the full test suite; plain `go test ./...` does not include these tests.
+
+The builder creates all six Windows, macOS, and Linux packages for x64 and ARM64. Each ZIP contains only the executable or, on macOS, a menu-bar app bundle. The build uses Go with CGO disabled.
+
+The included GitHub workflow tests on all three operating systems and builds all six packages. It does not publish a GitHub release.
+
+Tests use synthetic exports and mock VLC, TMDb, and Discord endpoints. No actual TMDb database is downloaded during development or validation. Live VLC/Discord IPC, tray, and login behavior still need target-desktop validation.
+
 ## Credits
 
 Movie and TV metadata and artwork are provided by TMDb. Square artwork fitting uses wsrv.nl when enabled. Dependency notices are available in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) in the source repository.
