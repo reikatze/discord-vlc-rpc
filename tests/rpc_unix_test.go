@@ -72,7 +72,11 @@ func TestRPCHandshakeDeduplicateClearReconnect(t *testing.T) {
 	}()
 	r := &discordRPC{dial: func() (net.Conn, error) { return net.DialTimeout("tcp", server.Addr().String(), time.Second) }}
 	defer r.close()
-	activity := makeActivity(exampleSnapshot())
+	body, err := json.Marshal(makeActivity(exampleSnapshot()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	activity := string(body)
 	r.update("123", activity)
 	receive := func() map[string]any {
 		select {
@@ -94,7 +98,7 @@ func TestRPCHandshakeDeduplicateClearReconnect(t *testing.T) {
 		t.Fatal("duplicate activity sent")
 	case <-time.After(20 * time.Millisecond):
 	}
-	r.update("123", nil)
+	r.update("123", "null")
 	if receive()["args"].(map[string]any)["activity"] != nil {
 		t.Fatal("presence not cleared")
 	}

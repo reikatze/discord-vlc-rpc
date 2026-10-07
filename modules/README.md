@@ -1,7 +1,8 @@
 # Application modules
 
 This Go package contains the application logic for `discord-vlc-rpc`. The Source
-root's `main.go` embeds the tray icon and calls `modules.Run(trayIcon)` once.
+root's `main.go` calls `modules.Run(modules.TrayIcon())` once. `icon.go` draws
+the tray icon in memory with Go's standard image library.
 `Run` retains the application's operating-system thread lock for the tray,
 command-line options, startup discovery and shutdown behavior.
 
@@ -20,13 +21,16 @@ command-line options, startup discovery and shutdown behavior.
 | `files*.go`, `child_*.go` | File operations and platform process helpers |
 
 Platform implementations retain their Go build constraints. Helpers are private
-to this package; tests stay alongside the modules to exercise those helpers.
+to this package. Unit tests live in `../tests/`; `cmd/test` overlays them into
+this package during testing and vetting, preserving access to private helpers.
 
 Run validation from the Source root:
 
 ```sh
-go test -race ./...
-go vet ./...
+go run ./cmd/test -race ./...
+go run ./cmd/test vet ./...
 ```
 
 See [the project README](../README.md) for installation, settings and release builds.
+
+`icon.go` draws the shared tray/application design; `icon_formats.go` creates Windows COFF resources and macOS ICNS containers. `desktop_icon.go` installs the Linux application launcher and supplies its icon to autostart entries.
