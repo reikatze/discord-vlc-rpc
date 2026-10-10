@@ -14,7 +14,8 @@ command-line options, startup discovery and shutdown behavior.
 | `filename.go` | Filename parsing and title matching |
 | `metadata.go`, `index.go` | TMDb requests, metadata caching and local title indexes |
 | `rpc.go`, `rpc_*.go` | Discord IPC and reconnection |
-| `settings.go`, `settings_ui.go` | Saved configuration and browser settings |
+| `instance_lock.go`, `instance_lock_windows.go`, `instance_lock_unix.go` | OS-managed instance lock without a TCP listener |
+| `settings.go` | Per-user JSON configuration, independent of VLC profiles |
 | `paths.go`, `process_paths.go`, `vlc_*.go` | Installation and profile discovery |
 | `http_setup.go`, `running_*.go` | VLC HTTP configuration and process waits |
 | `autostart_*.go` | Per-user login startup |

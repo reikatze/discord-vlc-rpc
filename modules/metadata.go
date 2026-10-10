@@ -1,6 +1,7 @@
 package modules
 
 import (
+	"container/list"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,6 +35,8 @@ type tmdbClient struct {
 	cache, index string
 	config       settings
 	requests     map[string]map[string]any
+	indexResults *indexSearchCache
+	seasons      *seasonCache
 }
 
 func newTMDB(p paths, c settings) *tmdbClient {
@@ -201,7 +205,7 @@ func (t *tmdbClient) search(ctx context.Context, p parsedMedia) (*metadataHit, e
 	}
 	var indexMatches map[string][][]int64
 	if t.config.IndexEnabled {
-		indexMatches = indexCandidateBatch(t.index, qs, kinds)
+		indexMatches = t.indexResults.batch(t.index, qs, kinds)
 	}
 	for _, kind := range kinds {
 		for queryIndex, q := range qs {
@@ -306,24 +310,34 @@ func (t *tmdbClient) search(ctx context.Context, p parsedMedia) (*metadataHit, e
 	if selected.kind == "tv" && p.TV {
 		hit.Episode = fmt.Sprintf("%02d", p.Episode)
 		if t.config.EpisodeLookup {
-			episode, e := t.get(ctx, fmt.Sprintf("/tv/%d/season/%d/episode/%d", id, p.Season, p.Episode), url.Values{})
+			season, e := t.season(ctx, id, p.Season)
 			if e != nil {
 				return nil, e
+			}
+			var episode map[string]any
+			if season != nil {
+				for _, record := range season.episodes {
+					if record.number == p.Episode && record.name != "" {
+						episode = map[string]any{"season_number": float64(p.Season), "episode_number": float64(record.number), "name": record.name, "still_path": record.still}
+						break
+					}
+				}
+			} else {
+				hit.Complete = false
+			}
+			// Some season responses omit usable records. Preserve exact-episode fallback.
+			if episode == nil {
+				episode, e = t.get(ctx, fmt.Sprintf("/tv/%d/season/%d/episode/%d", id, p.Season, p.Episode), url.Values{})
+				if e != nil {
+					return nil, e
+				}
 			}
 			if episode == nil {
 				hit.Complete = false
 			}
 			if episode != nil && int(number(episode, "season_number")) == p.Season && int(number(episode, "episode_number")) == p.Episode {
-				season, e := t.get(ctx, fmt.Sprintf("/tv/%d/season/%d", id, p.Season), url.Values{})
-				if e != nil {
-					return nil, e
-				}
-				if season == nil {
-					hit.Complete = false
-				}
-				episodes, _ := season["episodes"].([]any)
-				if len(episodes) >= p.Episode {
-					hit.Episode += fmt.Sprintf(" of %d", len(episodes))
+				if season != nil && season.count >= p.Episode {
+					hit.Episode += fmt.Sprintf(" of %d", season.count)
 				}
 				if name := text(episode, "name"); name != "" {
 					hit.Episode += ": " + name
@@ -332,11 +346,129 @@ func (t *tmdbClient) search(ctx context.Context, p parsedMedia) (*metadataHit, e
 					hit.Poster = still
 				}
 				hit.EpisodeURL = fmt.Sprintf("%s/season/%d/episode/%d", hit.URL, p.Season, p.Episode)
+			} else {
+				hit.Complete = false
 			}
 		}
 	}
 	return hit, nil
 }
+
+// Cache compact season records for sequential episodes, scoped to credentials,
+// language and endpoint. A short TTL allows ongoing seasons to change promptly.
+const seasonCacheLimit = 16
+const seasonCacheTTL = 15 * time.Minute
+
+type seasonEpisode struct {
+	number      int
+	name, still string
+}
+type seasonResponse struct {
+	count    int
+	episodes []seasonEpisode
+}
+type seasonKey struct {
+	base, language, credential string
+	show                       int64
+	season                     int
+}
+type seasonEntry struct {
+	key      seasonKey
+	response *seasonResponse
+	expires  time.Time
+}
+type seasonCache struct {
+	mu      sync.Mutex
+	entries map[seasonKey]*list.Element
+	lru     list.List
+	now     func() time.Time
+}
+
+func (c *seasonCache) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+func (c *seasonCache) get(key seasonKey) *seasonResponse {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if item := c.entries[key]; item != nil {
+		entry := item.Value.(seasonEntry)
+		if c.clock().Before(entry.expires) {
+			c.lru.MoveToFront(item)
+			return entry.response
+		}
+		delete(c.entries, key)
+		c.lru.Remove(item)
+	}
+	return nil
+}
+func (c *seasonCache) put(key seasonKey, response *seasonResponse) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		c.entries = make(map[seasonKey]*list.Element)
+	}
+	if old := c.entries[key]; old != nil {
+		delete(c.entries, key)
+		c.lru.Remove(old)
+	}
+	c.entries[key] = c.lru.PushFront(seasonEntry{key, response, c.clock().Add(seasonCacheTTL)})
+	if len(c.entries) > seasonCacheLimit {
+		oldest := c.lru.Back()
+		delete(c.entries, oldest.Value.(seasonEntry).key)
+		c.lru.Remove(oldest)
+	}
+}
+func (t *tmdbClient) season(ctx context.Context, show int64, season int) (*seasonResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	credential := sha256.Sum256([]byte(t.config.APIKey))
+	key := seasonKey{t.base, t.config.Language, hex.EncodeToString(credential[:]), show, season}
+	if cached := t.seasons.get(key); cached != nil {
+		return cached, nil
+	}
+	path := fmt.Sprintf("/tv/%d/season/%d", show, season)
+	// Expired shared records must not be resurrected by the per-lookup request cache.
+	delete(t.requests, path+"?")
+	data, err := t.get(ctx, path, url.Values{})
+	if err != nil || data == nil {
+		return nil, err
+	}
+	records, ok := data["episodes"].([]any)
+	if !ok {
+		return nil, nil
+	}
+	response := &seasonResponse{count: len(records)}
+	for _, value := range records {
+		record, ok := value.(map[string]any)
+		if !ok || int(number(record, "season_number")) != season {
+			continue
+		}
+		n := int(number(record, "episode_number"))
+		if n < 1 {
+			continue
+		}
+		response.episodes = append(response.episodes, seasonEpisode{n, text(record, "name"), text(record, "still_path")})
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// Missing/malformed records retain fallback behavior and are not shared.
+	if len(response.episodes) > 0 {
+		t.seasons.put(key, response)
+	}
+	return response, nil
+}
+
 func enrich(s *Snapshot, hit *metadataHit) {
 	if s == nil || hit == nil {
 		return

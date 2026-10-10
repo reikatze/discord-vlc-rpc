@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"container/list"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -17,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -81,6 +83,10 @@ func openIndexReader(folder string, kinds ...string) (*indexReader, error) {
 	if err != nil {
 		return nil, err
 	}
+	return openIndexGeneration(folder, m, kinds...)
+}
+
+func openIndexGeneration(folder string, m indexManifest, kinds ...string) (*indexReader, error) {
 	r := &indexReader{media: make(map[string]indexMediaReader)}
 	if len(kinds) == 0 {
 		kinds = []string{"movie", "tv"}
@@ -149,13 +155,86 @@ func indexCandidateBatch(folder string, titles, kinds []string) map[string][][]i
 	}
 	return matches
 }
-func (r *indexReader) candidates(title, kind string) []int64 {
-	if r == nil {
+
+// The cache is shared across media lookups; generation keys prevent stale IDs.
+// Empty successful searches are cached, but damaged/missing indexes are not.
+const indexSearchCacheLimit = 512
+
+type indexSearchKey struct{ folder, generation, kind, title string }
+type indexSearchEntry struct {
+	key indexSearchKey
+	ids []int64
+}
+type indexSearchCache struct {
+	mu      sync.Mutex
+	entries map[indexSearchKey]*list.Element
+	lru     list.List
+}
+
+func (c *indexSearchCache) batch(folder string, titles, kinds []string) map[string][][]int64 {
+	if c == nil {
+		return indexCandidateBatch(folder, titles, kinds)
+	}
+	m, err := readManifest(folder)
+	if err != nil {
 		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		c.entries = make(map[indexSearchKey]*list.Element)
+	}
+	var reader *indexReader
+	defer func() {
+		if reader != nil {
+			reader.close()
+		}
+	}()
+	matches := make(map[string][][]int64, len(kinds))
+	for _, kind := range kinds {
+		results := make([][]int64, len(titles))
+		for i, title := range titles {
+			key := indexSearchKey{folder, m.Generation, kind, normalizeIndex(title)}
+			if entry := c.entries[key]; entry != nil {
+				c.lru.MoveToFront(entry)
+				results[i] = append([]int64(nil), entry.Value.(indexSearchEntry).ids...)
+				continue
+			}
+			if reader == nil {
+				reader, err = openIndexGeneration(folder, m, kinds...)
+				if err != nil {
+					return nil
+				}
+			}
+			ids, err := reader.searchCandidates(key.title, kind)
+			if err != nil {
+				continue
+			}
+			results[i] = ids
+			c.entries[key] = c.lru.PushFront(indexSearchEntry{key, append([]int64(nil), ids...)})
+			if len(c.entries) > indexSearchCacheLimit {
+				oldest := c.lru.Back()
+				delete(c.entries, oldest.Value.(indexSearchEntry).key)
+				c.lru.Remove(oldest)
+			}
+		}
+		matches[kind] = results
+	}
+	return matches
+}
+
+func (r *indexReader) candidates(title, kind string) []int64 {
+	ids, _ := r.searchCandidates(title, kind)
+	return ids
+}
+
+func (r *indexReader) searchCandidates(title, kind string) ([]int64, error) {
+	if r == nil {
+		return nil, errors.New("Invalid index search")
 	}
 	media, ok := r.media[kind]
 	if !ok {
-		return nil
+		return nil, errors.New("Invalid index search")
 	}
 	wanted := normalizeIndex(title)
 	low, high := 0, media.count-1
@@ -163,32 +242,32 @@ func (r *indexReader) candidates(title, kind string) []int64 {
 		mid := (low + high) / 2
 		buf := r.offset[:]
 		if _, err := media.offsets.ReadAt(buf, int64(mid)*17); err != nil {
-			return nil
+			return nil, errors.New("Invalid index search")
 		}
 		at, err := strconv.ParseInt(strings.TrimSpace(string(buf)), 10, 64)
 		if err != nil || at < 0 {
-			return nil
+			return nil, errors.New("Invalid index search")
 		}
 		block := r.block[:]
 		n, err := media.rows.ReadAt(block, at)
 		if err != nil && err != io.EOF {
-			return nil
+			return nil, errors.New("Invalid index search")
 		}
 		newline := bytes.IndexByte(block[:n], '\n')
 		if newline < 0 {
-			return nil
+			return nil, errors.New("Invalid index search")
 		}
 		var row indexRow
 		if json.Unmarshal(block[:newline], &row) != nil || len(row.IDs) > 4 {
-			return nil
+			return nil, errors.New("Invalid index search")
 		}
 		if row.Title == wanted {
 			for _, id := range row.IDs {
 				if id < 1 {
-					return nil
+					return nil, errors.New("Invalid index search")
 				}
 			}
-			return row.IDs
+			return row.IDs, nil
 		}
 		if row.Title < wanted {
 			low = mid + 1
@@ -196,7 +275,7 @@ func (r *indexReader) candidates(title, kind string) []int64 {
 			high = mid - 1
 		}
 	}
-	return nil
+	return nil, nil
 }
 func scanRows(path string) (*os.File, *bufio.Scanner, error) {
 	f, err := os.Open(path)

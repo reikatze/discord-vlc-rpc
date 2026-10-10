@@ -86,8 +86,8 @@ func processConfig(p vlcProcess, fallback, goos string) (string, error) {
 	return filepath.Join(fallback, "vlcrc"), nil
 }
 
-// Select once before settings, IPC lock and browser server are initialized. Live
-// profile switching would otherwise mix credentials/caches from different VLCs.
+// Select the VLC profile once before settings and the instance lock are initialized.
+// Retain it so HTTP polling and setup use the same VLC configuration.
 func resolveRunningPaths(p paths, processes []vlcProcess, goos string) (paths, error) {
 	var selected *vlcProcess
 	var selectedConfig string

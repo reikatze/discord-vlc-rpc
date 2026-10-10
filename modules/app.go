@@ -5,8 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"github.com/gogpu/systray"
-	"hash/crc32"
-	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -50,16 +48,16 @@ func Run(trayIcon []byte) {
 		os.Exit(1)
 	}
 	p = resolved
+	lock, e := acquireInstanceLock(p.settingsFolder())
+	if e != nil {
+		fmt.Fprintln(os.Stderr, e)
+		return
+	}
+	defer lock.Close()
 	if err := initSettings(p); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	lock, e := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", 35000+crc32.ChecksumIEEE([]byte(p.config))%20000))
-	if e != nil {
-		fmt.Fprintln(os.Stderr, "Another companion may already be running:", e)
-		return
-	}
-	defer lock.Close()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	go p.trackVLCFolder(ctx)
@@ -89,9 +87,6 @@ func Run(trayIcon []byte) {
 		}
 		var auto *systray.MenuItem
 		auto = menu.AddCheckbox("Autostart", autostartEnabled(), func() { notify(setAutostart(!auto.IsChecked(), args)); auto.SetChecked(autostartEnabled()) })
-		settingsURL, err := startSettingsUI(ctx, p, func() { poke(s.refresh) })
-		notify(err)
-		menu.Add("Settings…", func() { notify(launchURL(settingsURL)) })
 		var enabled *systray.MenuItem
 		c, _ := loadSettings(p)
 		enabled = menu.AddCheckbox("Enable Discord presence", c.Enabled, func() {

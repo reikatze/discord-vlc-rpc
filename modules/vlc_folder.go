@@ -3,7 +3,6 @@ package modules
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -14,11 +13,11 @@ type rememberedVLC struct {
 }
 
 func vlcFolderStateFile() string {
-	base, err := os.UserConfigDir()
-	if err != nil {
+	base := applicationConfigFolder()
+	if base == "" {
 		return ""
 	}
-	return filepath.Join(base, "discord-vlc-rpc", "last-vlc.json")
+	return filepath.Join(base, "last-vlc.json")
 }
 
 func rememberVLCFolder(file, folder string) {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -59,7 +60,7 @@ func TestFilenameFormsAndPrivacy(t *testing.T) {
 	}
 }
 func TestSettingsDefaultsPersistenceAndValidation(t *testing.T) {
-	p := paths{config: t.TempDir()}
+	p := testPaths(t)
 	if err := initSettings(p); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +88,7 @@ func TestSettingsDefaultsPersistenceAndValidation(t *testing.T) {
 }
 
 func TestBuiltInIDAndStartupNotificationSettings(t *testing.T) {
-	p := paths{config: t.TempDir()}
+	p := testPaths(t)
 	// A configuration without the new preference keeps notifications enabled.
 	legacy, err := json.Marshal(map[string]any{"discord_application_id": builtInApplicationID(), "tmdb_api_key": "keep-key"})
 	if err != nil {
@@ -121,7 +122,7 @@ func TestBuiltInIDAndStartupNotificationSettings(t *testing.T) {
 	}
 }
 func TestServiceHeadlessShutdown(t *testing.T) {
-	p := paths{config: t.TempDir()}
+	p := testPaths(t)
 	if err := initSettings(p); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +148,7 @@ func TestServiceHeadlessShutdown(t *testing.T) {
 }
 
 func TestConfigurationCacheChangesErrorsAndForcedReload(t *testing.T) {
-	p := paths{config: t.TempDir()}
+	p := testPaths(t)
 	if err := initSettings(p); err != nil {
 		t.Fatal(err)
 	}
@@ -263,4 +264,82 @@ func BenchmarkVLCConfigurationPolling(b *testing.B) {
 			}
 		}
 	})
+}
+
+// Isolate the user's application folder and VLC profile for every settings test.
+func testPaths(t *testing.T) paths {
+	t.Helper()
+	root := t.TempDir()
+	switch runtime.GOOS {
+	case "windows":
+		t.Setenv("APPDATA", root)
+	case "darwin":
+		t.Setenv("HOME", root)
+	default:
+		t.Setenv("XDG_CONFIG_HOME", root)
+	}
+	return paths{config: filepath.Join(root, "vlc")}
+}
+
+func TestApplicationStorageIndependentOfVLCProfile(t *testing.T) {
+	p := testPaths(t)
+	base, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := filepath.Join(base, "discord-vlc-rpc")
+	if p.settingsFolder() != app || p.settingsFile() != filepath.Join(app, "config.json") {
+		t.Fatal("incorrect standalone settings location", p.settingsFile())
+	}
+	if vlcFolderStateFile() != filepath.Join(app, "last-vlc.json") {
+		t.Fatal("remembered folder is not alongside settings")
+	}
+	icon, err := desktopIconPath()
+	if err != nil || icon != filepath.Join(app, "icon.png") {
+		t.Fatal("icon location differs", icon, err)
+	}
+	vlcFile := p.vlcConfigFile()
+	original := []byte("http-password=vlc-private\n")
+	if err := atomicWrite(vlcFile, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(p.config, "discord-vlc-rpc", "config.json")
+	if err := atomicWrite(old, []byte(`{"enabled":false,"tmdb_api_key":"obsolete"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := initSettings(p); err != nil {
+		t.Fatal(err)
+	}
+	c, err := loadSettings(p)
+	if err != nil || !reflect.DeepEqual(c, defaults()) {
+		t.Fatal("fresh settings not created", c, err)
+	}
+	if p.indexFolder(c) != filepath.Join(app, "tmdb-index") || p.cacheFolder(c) != filepath.Join(app, "metadata-cache") {
+		t.Fatal("generated data still follows VLC profile")
+	}
+	other := paths{config: filepath.Join(t.TempDir(), "portable"), configExplicit: true, configFile: filepath.Join(t.TempDir(), "custom-vlcrc"), configFileExplicit: true}
+	if other.settingsFile() != p.settingsFile() || other.indexFolder(c) != p.indexFolder(c) || other.cacheFolder(c) != p.cacheFolder(c) {
+		t.Fatal("VLC overrides relocate application data")
+	}
+	c.Enabled = false
+	if err := saveSettings(other, c); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loadSettings(p)
+	if err != nil || loaded.Enabled {
+		t.Fatal("application settings not shared across profiles", err)
+	}
+	c.IndexPath = filepath.Join(t.TempDir(), "custom-index")
+	c.CachePath = filepath.Join(t.TempDir(), "custom-cache")
+	if p.indexFolder(c) != c.IndexPath || p.cacheFolder(c) != c.CachePath {
+		t.Fatal("explicit data overrides lost")
+	}
+	body, err := os.ReadFile(vlcFile)
+	if err != nil || string(body) != string(original) {
+		t.Fatal("VLC configuration changed", err)
+	}
+	body, err = os.ReadFile(old)
+	if err != nil || string(body) != `{"enabled":false,"tmdb_api_key":"obsolete"}` {
+		t.Fatal("old app configuration was altered", err)
+	}
 }

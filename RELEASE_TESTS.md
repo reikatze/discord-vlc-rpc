@@ -16,8 +16,7 @@ Passed here:
   and credential-free errors, using mock endpoints.
 - Streaming gzip indexing, external merge sorting, ambiguity handling, binary
   lookup, manifest validation and failure/cancellation publication safety.
-- Settings defaults and persistence, protected browser settings, CSRF rejection
-  and hidden saved credentials.
+- JSON settings defaults and persistence.
 - Configuration caching: unchanged files, atomic replacements with matching size
   and timestamp, invalid edits, deletion/recreation and forced reloads.
 - Cancelled metadata results rejected when a newer lookup targets the same file;
@@ -75,8 +74,8 @@ and the title separator replacer are now constructed once. Reproduce with
 Periodic tray status labels and checkbox values update only when changed.
 Live tray behavior remains part of target-desktop validation.
 
-Running-process discovery is performed before companion settings, the profile lock
-and the browser server are initialized. The session retains its selected profile.
+Running-process discovery is performed before companion settings and the application-folder
+lock are initialized. The session retains its selected profile.
 Windows executable/command-line queries and macOS sysctl/lsof calls still require
 native target validation. This host denies reading child-process `/proc/exe` and
 `/proc/cwd`, so live Linux discovery is not validated here; the filesystem parser
@@ -110,7 +109,8 @@ the executable or macOS app bundle. Package relocation preserves platform build 
 tray's operating-system thread lock. Race tests, vet, six cross-builds and
 packaged Linux headless startup/shutdown were rechecked after the move.
 
-Startup notifications default to enabled and can be disabled in Settings. Tests
+Startup notifications default to enabled and can be disabled using
+`startup_notification` in `config.json`. Tests
 cover saving both toggle values, loading configurations without the new option,
 omitting the built-in Discord ID from settings and JSON, retaining custom IDs,
 and using the effective ID for playback. Windows folder actions use ShellExecuteW
@@ -126,3 +126,30 @@ stored independently from profile settings and refreshed in a background loop.
 Application icons use the same procedural drawing as the tray. Container tests decode all macOS ICNS representations and inspect Windows COFF resources for both architectures. Linux launcher tests verify the generated icon, preserved arguments, and autostart icon. All six release packages were rebuilt and inspected for linked Windows resource entries and macOS bundle icon metadata. Live Explorer/Finder/desktop icon display still needs validation on those systems.
 
 Discord activity JSON is now encoded once per published playback update and reused between updates. Regression coverage verifies deduplication, connection checks, the 30-second resend, clearing, and reconnect replay. Stopped VLC uses a two-second polling interval; HTTP integration coverage verifies idle pacing, immediate manual refresh, and recovery to half-second playback polling. Linux icon/launcher tests verify unchanged file identity and timestamps, updates after executable/argument changes, and repair of missing or damaged files.
+
+Application settings and default metadata/index folders now use the user's standalone `discord-vlc-rpc` configuration folder alongside `last-vlc.json`, independent of VLC profile selection. Path tests cover settings initialization, sharing across custom/portable VLC profiles, custom cache/index overrides, ignoring app settings beneath VLC, and keeping VLC's `vlcrc` intact. Tests isolate the user configuration root on each platform. The instance lock uses the app folder so different VLC profiles cannot launch competing writers for the shared configuration.
+
+Configuration is edited directly in `config.json` through **Open configuration folder**.
+The application has no browser settings page or settings HTTP listener. The separate
+single-instance lock and VLC HTTP client remain. Configuration reload and invalid-edit
+regression coverage continue to verify direct JSON edits.
+
+Metadata invalidation covers TMDb credentials, language, episode lookup, poster fit,
+cache lifetime, effective index use, and cache/index paths. Display and startup changes
+preserve pending lookups and completed matches, while metadata edits cancel stale work.
+Manual Refresh continues to restart lookups.
+
+Index search-cache tests cover normalized positive and empty-result reuse, caller
+isolation, generation changes, the 512-entry bound, and damaged-index recovery.
+Season tests cover reuse across sequential episodes without individual-episode
+requests, exact-episode fallback, 15-minute expiry, credential/language isolation,
+temporary-error and missing-season recovery, cancellation, and the 16-season bound.
+
+The instance lock uses Windows LockFileEx or macOS/Linux flock on `instance.lock`
+in the application configuration folder, acquired before settings initialization.
+Tests cover duplicate rejection, retained ownership after a failed contender,
+normal release, separate folders, filesystem errors, cross-process exclusion,
+and release after both normal process exit and forced termination. The lock file
+remains in place and its existence does not imply a running instance. No TCP
+listener is used for single-instance protection. Native macOS/Windows runtime
+validation remains necessary; this host verifies Linux behavior and cross-builds.

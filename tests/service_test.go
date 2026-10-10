@@ -77,7 +77,7 @@ func TestStandaloneHTTPToDiscordAndPrivacy(t *testing.T) {
 			}
 		}
 	}()
-	p := paths{config: t.TempDir()}
+	p := testPaths(t)
 	initSettings(p)
 	atomicWrite(filepath.Join(p.config, "vlcrc"), []byte("http-port="+strings.Split(vlc.URL, ":")[2]+"\n"), 0600)
 	s := &service{paths: p, refresh: make(chan struct{}, 1), buildIndex: make(chan struct{}, 1), rpcDial: func() (net.Conn, error) { return net.DialTimeout("tcp", rpc.Addr().String(), time.Second) }}
@@ -138,7 +138,7 @@ func TestCancelledLookupCannotReplaceSameMediaRequest(t *testing.T) {
 		}
 	}))
 	defer vlc.Close()
-	p := paths{config: t.TempDir()}
+	p := testPaths(t)
 	if err := initSettings(p); err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestPollingBackoffRefreshAndActiveRecovery(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	p := paths{config: t.TempDir()}
+	p := testPaths(t)
 	initSettings(p)
 	atomicWrite(filepath.Join(p.config, "vlcrc"), []byte("http-port="+strings.Split(server.URL, ":")[2]+"\n"), 0600)
 	s := &service{paths: p, refresh: make(chan struct{}, 1), buildIndex: make(chan struct{}, 1), rpcDial: func() (net.Conn, error) { return nil, errors.New("test offline") }}
@@ -347,7 +347,7 @@ func TestStoppedPollingRefreshAndPlaybackRecovery(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	p := paths{config: t.TempDir()}
+	p := testPaths(t)
 	if err := initSettings(p); err != nil {
 		t.Fatal(err)
 	}
@@ -398,5 +398,174 @@ func TestStoppedPollingRefreshAndPlaybackRecovery(t *testing.T) {
 	fourth := next(1500 * time.Millisecond)
 	if fourth.Sub(third) < 400*time.Millisecond || fourth.Sub(third) > 1500*time.Millisecond {
 		t.Fatal("playback interval not restored", fourth.Sub(third))
+	}
+}
+
+func TestMetadataLookupSurvivesPresentationSettingsEdits(t *testing.T) {
+	vlc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/requests/status.json" {
+			fmt.Fprint(w, `{"version":"3","apiversion":3,"state":"playing","time":10,"length":100,"rate":1,"currentplid":1,"information":{"category":{"meta":{"filename":"Movie.mkv"}}}}`)
+		} else {
+			fmt.Fprint(w, `{"children":[{"id":1,"uri":"file:///media/Movie.mkv"}]}`)
+		}
+	}))
+	defer vlc.Close()
+	p := testPaths(t)
+	if err := initSettings(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWrite(filepath.Join(p.config, "vlcrc"), []byte("http-port="+strings.Split(vlc.URL, ":")[2]+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	type request struct {
+		ctx    context.Context
+		config settings
+		reply  chan string
+	}
+	requests := make(chan request, 8)
+	s := &service{paths: p, refresh: make(chan struct{}, 1), buildIndex: make(chan struct{}, 1), rpcDial: func() (net.Conn, error) { return nil, errors.New("test offline") }}
+	s.lookup = func(ctx context.Context, _ paths, c settings, _ parsedMedia, _ string) (*metadataHit, []chapter, error) {
+		q := request{ctx, c, make(chan string, 1)}
+		select {
+		case requests <- q:
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
+		select {
+		case title := <-q.reply:
+			return &metadataHit{Title: title, Complete: true}, nil, nil
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("service did not stop")
+		}
+	}()
+	next := func() request {
+		t.Helper()
+		select {
+		case q := <-requests:
+			return q
+		case <-time.After(5 * time.Second):
+			t.Fatal("expected metadata lookup")
+			return request{}
+		}
+	}
+	save := func(c settings) {
+		t.Helper()
+		if err := saveSettings(p, c); err != nil {
+			t.Fatal(err)
+		}
+		// Do not use Refresh: direct JSON edits must preserve lookup work.
+	}
+	unchanged := func(pending context.Context, title string) {
+		t.Helper()
+		timer := time.NewTimer(1200 * time.Millisecond)
+		defer timer.Stop()
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-timer.C:
+				return
+			case <-pending.Done():
+				t.Fatal("presentation edit cancelled a pending lookup")
+			case <-requests:
+				t.Fatal("presentation edit started another lookup")
+			case <-ticker.C:
+				playback, _, _, _, _ := s.details()
+				if title != "" && !strings.Contains(playback, title) {
+					t.Fatal("presentation edit discarded the match:", playback)
+				}
+			}
+		}
+	}
+	old := next()
+	c, err := loadSettings(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.StartupNotification = false
+	c.ApplicationID = "123456789"
+	c.LargeImage, c.LargeText = "custom", "Updated hover text"
+	c.SmallPlaying, c.SmallPaused, c.SmallIdle = "play", "pause", "idle"
+	c.Ignored = []string{"/unrelated/private"}
+	save(c)
+	unchanged(old.ctx, "")
+	c.Language = "fr-FR"
+	save(c)
+	current := next()
+	if current.config.Language != "fr-FR" {
+		t.Fatal("lookup did not use the new language")
+	}
+	select {
+	case <-old.ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("metadata edit did not cancel stale work")
+	}
+	current.reply <- "Matched title"
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		playback, _, _, _, _ := s.details()
+		if strings.Contains(playback, "Matched title") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("lookup result not applied")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	c.StartupNotification = true
+	c.ApplicationID = "987654321"
+	c.LargeText = "Another hover text"
+	save(c)
+	unchanged(context.Background(), "Matched title")
+	c.APIKey = "new-test-key"
+	c.IndexEnabled = false // Keep automatic database downloads disabled in this fixture.
+	save(c)
+	updated := next()
+	if updated.config.APIKey != c.APIKey {
+		t.Fatal("credential edit did not restart lookup")
+	}
+}
+
+func TestMetadataConfigurationInputs(t *testing.T) {
+	p := testPaths(t)
+	base := defaults()
+	metadataEdits := map[string]func(*settings){
+		"credential":   func(c *settings) { c.APIKey = "new-key" },
+		"language":     func(c *settings) { c.Language = "fr-FR" },
+		"episode":      func(c *settings) { c.EpisodeLookup = false },
+		"poster":       func(c *settings) { c.PosterFit = "raw" },
+		"lifetime":     func(c *settings) { c.CacheDays++ },
+		"index":        func(c *settings) { c.IndexEnabled = false },
+		"index folder": func(c *settings) { c.IndexPath = filepath.Join(t.TempDir(), "index") },
+		"cache folder": func(c *settings) { c.CachePath = filepath.Join(t.TempDir(), "cache") },
+	}
+	for name, edit := range metadataEdits {
+		t.Run(name, func(t *testing.T) {
+			c := base
+			edit(&c)
+			if metadataConfiguration(p, c) == metadataConfiguration(p, base) {
+				t.Fatal("metadata edit was ignored")
+			}
+		})
+	}
+	// Explicitly selecting the default storage location does not change lookup inputs.
+	c := base
+	c.IndexPath, c.CachePath = p.indexFolder(base), p.cacheFolder(base)
+	if metadataConfiguration(p, c) != metadataConfiguration(p, base) {
+		t.Fatal("equivalent storage paths invalidate lookups")
 	}
 }

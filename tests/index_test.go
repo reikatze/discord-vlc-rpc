@@ -271,3 +271,67 @@ func BenchmarkIndexCandidateBatch(b *testing.B) {
 		}
 	})
 }
+
+func TestIndexSearchCacheGenerationMissesBoundsAndRecovery(t *testing.T) {
+	dir := syntheticIndex(t)
+	cache := &indexSearchCache{}
+	got := cache.batch(dir, []string{"Alpha", "Missing"}, []string{"movie"})
+	if !reflect.DeepEqual(got["movie"][0], []int64{2, 3}) || len(got["movie"][1]) != 0 || len(cache.entries) != 2 {
+		t.Fatal("positive or empty results were not cached", got)
+	}
+	// Returned IDs must not allow a caller to mutate a cached match.
+	got["movie"][0][0] = 999
+	got = cache.batch(dir, []string{"ALPHA"}, []string{"movie"})
+	if !reflect.DeepEqual(got["movie"][0], []int64{2, 3}) || len(cache.entries) != 2 {
+		t.Fatal("normalization/copy isolation", got)
+	}
+	m, _ := readManifest(dir)
+	rows := filepath.Join(dir, m.Generation+".movie.rows")
+	original, err := os.ReadFile(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Warm hits, including empty results, do not read row contents again.
+	if err := os.WriteFile(rows, []byte("broken\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got = cache.batch(dir, []string{"alpha", "missing"}, []string{"movie"})
+	if !reflect.DeepEqual(got["movie"][0], []int64{2, 3}) || len(got["movie"][1]) != 0 {
+		t.Fatal("warm cache missed", got)
+	}
+	cache.batch(dir, []string{"zulu"}, []string{"movie"})
+	if len(cache.entries) != 2 {
+		t.Fatal("corrupt search was cached")
+	}
+	if err := os.WriteFile(rows, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	got = cache.batch(dir, []string{"zulu"}, []string{"movie"})
+	if !reflect.DeepEqual(got["movie"][0], []int64{7}) {
+		t.Fatal("repaired search did not recover", got)
+	}
+	download := func(_ context.Context, address string) (io.ReadCloser, error) {
+		kind := "movie"
+		if strings.Contains(address, "tv_series") {
+			kind = "tv"
+		}
+		return io.NopCloser(bytes.NewReader(exportData(kind))), nil
+	}
+	if err := refreshIndex(context.Background(), dir, download); err != nil {
+		t.Fatal(err)
+	}
+	newManifest, _ := readManifest(dir)
+	if newManifest.Generation == m.Generation {
+		t.Fatal("generation did not change")
+	}
+	cache.batch(dir, []string{"Alpha"}, []string{"movie"})
+	if _, ok := cache.entries[indexSearchKey{dir, newManifest.Generation, "movie", "alpha"}]; !ok {
+		t.Fatal("old generation was reused")
+	}
+	for i := 0; i < indexSearchCacheLimit+10; i++ {
+		cache.batch(dir, []string{fmt.Sprint("miss-", i)}, []string{"movie"})
+	}
+	if len(cache.entries) != indexSearchCacheLimit || cache.lru.Len() != indexSearchCacheLimit {
+		t.Fatal("cache exceeded bound")
+	}
+}
