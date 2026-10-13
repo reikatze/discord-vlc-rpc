@@ -81,11 +81,7 @@ func TestStandaloneHTTPToDiscordAndPrivacy(t *testing.T) {
 		}
 	}()
 	p := testPaths(t)
-	cfg := defaults()
-	cfg.ApplicationID = "123456789"
-	if err := saveSettings(p, cfg); err != nil {
-		t.Fatal(err)
-	}
+	initSettings(p)
 	atomicWrite(filepath.Join(p.config, "vlcrc"), []byte("http-port="+strings.Split(vlc.URL, ":")[2]+"\n"), 0600)
 	s := &service{paths: p, refresh: make(chan struct{}, 1), buildIndex: make(chan struct{}, 1), rpcDial: func() (net.Conn, error) { return net.DialTimeout("tcp", rpc.Addr().String(), time.Second) }}
 	ctx, cancel := context.WithCancel(context.Background())
