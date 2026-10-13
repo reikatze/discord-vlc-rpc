@@ -61,11 +61,11 @@ Linux trays need StatusNotifierItem support. GNOME may need an AppIndicator exte
 5. Start or restart VLC, choose the check action again, and confirm **VLC HTTP: Ready**.
 6. Open a local video in VLC and check your Discord profile for the activity.
 
-For the full experience, open **Settings…** in the tray menu and save your TMDb key or read access token. The saved key stays hidden; leaving the key field empty keeps it, and a separate checkbox removes it.
+For the full experience, choose **Open configuration folder** in the tray menu, open `config.json` in a text editor, and set `tmdb_api_key` to your TMDb key or read access token. Save the file to apply the change. Set the value to an empty string to remove the credential.
 
 HTTP setup preserves unrelated VLC preferences, an existing password, and other interfaces. It creates a password if needed, saves a timestamped backup of an existing VLC configuration file, and configures new HTTP access on `127.0.0.1`. A working HTTP configuration is preserved. VLC preferences change only when you select the setup action.
 
-The app uses a built-in Discord application when the optional custom application ID is blank. The built-in ID is not displayed in settings or saved in the configuration file. To use your own application, create one in the [Discord Developer Portal](https://discord.com/developers/applications) and save its ID in **Settings…** or `discord_application_id` in the configuration file.
+The app uses a built-in Discord application when the optional custom application ID is blank. The built-in ID is not displayed in settings or saved in the configuration file. To use your own application, create one in the [Discord Developer Portal](https://discord.com/developers/applications) and set `discord_application_id` in `config.json` to its ID.
 
 For a custom application, you can upload square Rich Presence assets and set their names in `large_image`, `small_image_playing`, `small_image_paused`, and `small_image_idle`. These asset names are empty by default.
 
@@ -74,7 +74,6 @@ For a custom application, you can upload square Rich Presence assets and set the
 | Action | What it does |
 |---|---|
 | **Autostart** | Starts the app when your user account logs in |
-| **Settings…** | Opens the local settings page in your browser |
 | **Enable Discord presence** | Saves your on/off preference |
 | **Pause presence for this session** | Temporarily hides activity |
 | **Refresh playback / metadata** | Checks playback immediately and reloads settings and metadata |
@@ -99,9 +98,9 @@ Autostart is opt-in. It uses the Windows user Run registry key, macOS LaunchAgen
 
 ## Configuration
 
-The startup notification is enabled by default. Turn off **Show a notification when the app starts** in Settings to disable it. Headless mode does not show notifications.
+The startup notification is enabled by default. Set `startup_notification` to `false` in `config.json` to disable it for subsequent starts. Headless mode does not show notifications.
 
-The defaults should be fine for most people. Use **Settings…** to change them, or edit `discord-vlc-rpc/config.json` beneath VLC's configuration directory. Changes reload automatically; **Refresh playback / metadata** also forces a reload.
+The defaults should be fine for most people. Choose **Open configuration folder** in the tray menu and edit `config.json` in a text editor to change them. Changes reload automatically; **Refresh playback / metadata** also forces a reload.
 
 | Option | Default | What it controls |
 |---|---|---|
@@ -123,9 +122,29 @@ The defaults should be fine for most people. Use **Settings…** to change them,
 | `enabled` | `true` | Enables Rich Presence |
 | `ignored_paths` | `[]` | JSON array of local files or directories to hide |
 
-Invalid edits leave the last valid runtime settings in use and appear in the status rows. The file stores your TMDb credential in plain text and is created with user-only permissions where supported. The browser settings page runs on localhost and uses a per-run session token and form checks.
+Invalid edits leave the last valid runtime settings in use and appear in the status rows. The file stores your TMDb credential in plain text and is created with user-only permissions where supported.
 
 ### Where files are stored
+
+Application files are stored in the app's own per-user folder, alongside `last-vlc.json`:
+
+| OS | Application configuration folder |
+|---|---|
+| Windows | `%APPDATA%\discord-vlc-rpc` |
+| macOS | `~/Library/Application Support/discord-vlc-rpc` |
+| Linux | `$XDG_CONFIG_HOME/discord-vlc-rpc` or `~/.config/discord-vlc-rpc` |
+
+| Path within that folder | Contents |
+|---|---|
+| `config.json` | App settings |
+| `last-vlc.json` | Remembered VLC installation folder |
+| `instance.lock` | OS-managed single-instance lock; the file remains after exit |
+| `tmdb-index/` | Generated movie and TV title indexes |
+| `metadata-cache/` | Cached TMDb matches |
+
+These settings and default data folders are shared across VLC installations and profiles. Only one app instance can run for each application configuration folder. Windows uses an exclusive file-range lock; macOS and Linux use `flock`. The OS releases the lock when the process exits or crashes, without a listening TCP port. The **Open configuration folder** tray action opens this application folder. Custom `tmdb_index_path` and `metadata_cache_path` settings still select their own absolute paths.
+
+VLC's own HTTP settings are read from its selected configuration directory:
 
 | OS | Default VLC configuration directory |
 |---|---|
@@ -133,14 +152,6 @@ Invalid edits leave the last valid runtime settings in use and appear in the sta
 | Portable Windows | VLC's `portable` directory when detected |
 | macOS | `~/Library/Preferences/org.videolan.vlc` |
 | Linux | `$XDG_CONFIG_HOME/vlc` or `~/.config/vlc` |
-
-The app stores these paths beneath the selected VLC configuration directory:
-
-| Path | Contents |
-|---|---|
-| `discord-vlc-rpc/config.json` | App settings |
-| `discord-vlc-rpc/tmdb-index/` | Generated movie and TV title indexes |
-| `discord-vlc-rpc/metadata-cache/` | Cached TMDb matches |
 
 Startup discovery checks your user's running VLC processes on all three platforms. It follows VLC's `--config` file, Linux's `XDG_CONFIG_HOME` or `HOME`, and macOS's `HOME`. Windows also checks the native `portable` folder and supports absolute launcher-supplied `--config` files. On macOS, the VLC folder is its enclosing `.app` bundle.
 
@@ -155,11 +166,11 @@ For a custom installation or profile, use these command-line options:
 
 Explicit paths override automatic discovery. Multiple distinct running installations or profiles need explicit selection. If process information is inaccessible, normal default paths remain available; custom profiles need explicit flags.
 
-The selected profile stays fixed during a session so settings and caches remain together. If you start VLC with a different profile later, restart the app with that VLC running. HTTP setup refuses to edit a different automatically detected profile.
+The selected VLC profile stays fixed during a session so HTTP credentials and HTTP setup target the same VLC configuration. App settings and caches remain in the application folder. If you start VLC with a different profile later, restart the app with that VLC running. HTTP setup refuses to edit a different automatically detected profile.
 
 ## Keep private media private
 
-Add files or directories you never want shown in Discord to **Ignored local files or folders** in Settings, or edit `ignored_paths` as a JSON array:
+Add files or directories you never want shown in Discord to `ignored_paths` in `config.json` as a JSON array:
 
 ```json
 {
@@ -227,9 +238,9 @@ With `tmdb_local_index` enabled, the app builds the index in the background from
 
 The last complete generation remains available while both replacement indexes are built. Playback, cached metadata, and online searches continue during maintenance. A failed build leaves the active index untouched. Titles with more than four matching IDs fall back to online search.
 
-Downloads, decompression, and sorting are handled by the app with bounded buffers and cancellation. Lookups read small sections from disk instead of loading the whole database into memory. Each lookup reuses its index files and read buffers, then closes the files before making network requests.
+Downloads, decompression, and sorting are handled by the app with bounded buffers and cancellation. Lookups read small sections from disk instead of loading the whole database into memory. Each lookup reuses its index files and read buffers, then closes the files before making network requests. An in-memory cache retains up to 512 title searches, including empty results, keyed by database folder, generation, media type, and normalized title. Cached searches avoid reopening the index files; a published generation uses new cache entries.
 
-To disable local lookups and automatic maintenance, turn off **Build and maintain the local title index** in Settings or set:
+To disable local lookups and automatic maintenance, set this option in `config.json`:
 
 ```json
 {
@@ -237,19 +248,21 @@ To disable local lookups and automatic maintenance, turn off **Build and maintai
 }
 ```
 
-**Pause database updates for this session** temporarily pauses index maintenance and cancels an active build without rewriting your saved preference. Generated files are stored in `discord-vlc-rpc/tmdb-index/` unless you set `tmdb_index_path`.
+**Pause database updates for this session** temporarily pauses index maintenance and cancels an active build without rewriting your saved preference. Generated files are stored in `tmdb-index/` beneath the app's per-user configuration folder unless you set `tmdb_index_path`.
 
 ## Cache, requests, and artwork
 
-Metadata is stored in `discord-vlc-rpc/metadata-cache/` beneath the selected VLC configuration directory. Set `metadata_cache_path` to use a different absolute path.
+Metadata is stored in `metadata-cache/` beneath the app's per-user configuration folder. Set `metadata_cache_path` to use a different absolute path.
 
 Successful TMDb results are refreshed after 60 days by default, controlled by `tmdb_positive_cache_days`. Missing results retry after an hour; partial matches or artwork fallbacks retry after ten minutes. The disk cache is limited to 4,096 entries. Use **Clear metadata cache** when you want to test matching from scratch.
 
-Requests have bounded deadlines and are cancelled when their media or settings change. Authentication and rate-limit errors appear in status without exposing credentials. A TMDb error leaves basic filename presence available.
+Episode lookups use the season response for names, still images, and episode counts when usable records are available, with an individual-episode request as a fallback. Up to 16 compact season responses are cached in memory for 15 minutes and shared across sequential episodes. Responses are scoped to the TMDb endpoint, credential, language, show, and season; failed requests and missing seasons are not cached. The persistent metadata cache is checked before index searches or season requests.
+
+Requests have bounded deadlines and are cancelled when their media or metadata settings change. Changes to startup notifications, Discord application IDs, and presence image settings keep existing matches and in-progress lookups; updated presence settings apply on the next playback check. **Refresh playback / metadata** still forces a new lookup. Authentication and rate-limit errors appear in status without exposing credentials. A TMDb error leaves basic filename presence available.
 
 With `poster_fit=contain`, the TMDb image URL is sent to [wsrv.nl](https://wsrv.nl/) so portrait artwork fits Discord's square image area. If fitting fails, the raw image is used temporarily. Set `poster_fit=raw` to use TMDb images directly; Discord may crop them. Verified episode stills take priority over the show poster.
 
-The app checks VLC every half-second during playback, pausing, and buffering, and every two seconds while VLC is stopped. Playback can therefore take up to two seconds to be detected after an idle period. Failed checks increase the current interval up to a five-second maximum; a successful playback check restores half-second polling. **Refresh playback / metadata** checks immediately, and saving browser settings also wakes the app. Discord activity JSON is encoded once per published playback update and reused during connection checks. Identical activity updates are skipped, with a resend every 30 seconds and replay after reconnecting.
+The app checks VLC every half-second during playback, pausing, and buffering, and every two seconds while VLC is stopped. Playback can therefore take up to two seconds to be detected after an idle period. Failed checks increase the current interval up to a five-second maximum; a successful playback check restores half-second polling. Saved `config.json` edits reload during the next polling cycle. **Refresh playback / metadata** checks immediately and forces a settings reload. Discord activity JSON is encoded once per published playback update and reused during connection checks. Identical activity updates are skipped, with a resend every 30 seconds and replay after reconnecting.
 
 Discord reconnects use increasing retry delays. On macOS and Linux, socket discovery has a one-second overall deadline and tries the last successful socket first when it remains in the current search scope.
 
@@ -271,7 +284,7 @@ Discord reconnects use increasing retry delays. On macOS and Linux, socket disco
 | A network stream or private file shows no activity | Network streams and matching ignored paths deliberately clear presence |
 | Discord was restarted | Reconnection is automatic; check the status row if it remains disconnected |
 | The local index does not build | Enable it, save a TMDb key, check directory permissions, and inspect the **Database** status |
-| Another app instance is already running | Quit it first; only one instance runs for each configuration profile |
+| Another app instance is already running | Quit it first; only one instance runs for each application configuration folder |
 | Settings do not take effect | Check for invalid JSON or values, then choose **Refresh playback / metadata** |
 
 ## Build and test
