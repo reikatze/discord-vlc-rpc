@@ -326,3 +326,9 @@ Discord is a trademark of Discord Inc. This project is not affiliated with Disco
 ## License
 
 [MIT](LICENSE)
+
+### Desktop integration tests
+
+The workflow installs VLC on Linux, Windows, and macOS, then requires real playback tests and Discord IPC mocks over Windows named pipes or macOS/Linux Unix sockets. A generated local PCM WAV exercises play, pause, seek, resume, stop, disabled presence, and shutdown using dummy output devices. No Discord account or TMDb credential is needed.
+
+To run these checks locally, install VLC, stop Discord so the mock can own its IPC endpoint, and set `DISCORD_VLC_RPC_INTEGRATION=1`. Set `VLC_BINARY` to the full VLC executable path if it is not automatically found. Run `go run ./cmd/test -count=1 -timeout=3m -run 'TestNativeDiscordIPC|TestRealVLCPlayback' ./modules`. Integration checks skip in ordinary unit-test runs; the workflow enables them explicitly, so missing VLC or unavailable native IPC fails the integration job. These checks exercise native IPC and VLC HTTP playback, not the tray UI or a signed-in Discord client.
