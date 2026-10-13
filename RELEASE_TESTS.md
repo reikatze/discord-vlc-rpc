@@ -184,3 +184,11 @@ root, so native IPC and real VLC execution cannot be validated here. The ordinar
 suite and cross-compilation checks validate the harness and test code; native
 runtime verification is delegated to the workflow. Tray UI and live Discord
 account presence remain desktop release checks.
+
+Workflow run 38332327690 verified native IPC and real VLC integration on Windows
+(5.390 seconds) and Linux (5.008 seconds). macOS passed its ordinary tests but
+VLC startup rejected `--no-one-instance`, which is now omitted on macOS. Platform
+argument tests cover this distinction. Integration jobs now use verbose output
+to show each test result. The generated media is sought through rather than
+played to completion, so a roughly five-second integration run is expected.
+The corrected macOS runtime check remains pending a new workflow run.

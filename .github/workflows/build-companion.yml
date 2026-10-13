@@ -53,7 +53,7 @@ jobs:
       - name: Real VLC and native Discord IPC integration
         env:
           DISCORD_VLC_RPC_INTEGRATION: '1'
-        run: go run ./cmd/test -count=1 -timeout=3m -run 'TestNativeDiscordIPC|TestRealVLCPlayback' ./modules
+        run: go run ./cmd/test -v -count=1 -timeout=3m -run 'TestNativeDiscordIPC|TestRealVLCPlayback' ./modules
   build:
     needs: test
     runs-on: ubuntu-latest
