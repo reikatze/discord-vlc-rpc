@@ -158,13 +158,6 @@ func (s *service) run(parent context.Context) error {
 		}
 	}()
 	key, lookupStatus, indexScope := "", "Filename only", ""
-	// Invalidate a request once, even if multiple changes occur in one cycle.
-	invalidateLookup := func() {
-		if key != "" || lookupCancel != nil {
-			cancelLookup()
-		}
-		key = ""
-	}
 	var lastLookupConfig lookupConfiguration
 	var hit *metadataHit
 	var chapters []chapter
@@ -199,7 +192,8 @@ func (s *service) run(parent context.Context) error {
 		lookupConfig := c
 		lookupConfig.IndexEnabled = activeIndex
 		if latest := metadataConfiguration(s.paths, lookupConfig); latest != lastLookupConfig {
-			invalidateLookup()
+			cancelLookup()
+			key = ""
 			lastLookupConfig = latest
 		}
 		scope := s.paths.indexFolder(c)

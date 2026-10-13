@@ -2,21 +2,13 @@ name: Go companion
 on:
   push:
     branches:
-      - '**'
+      - main
     paths:
       - '**/*.go'
       - 'go.mod'
       - 'go.sum'
       - 'tests/go.mod'
       - '.github/workflows/build-companion.yml'
-  pull_request:
-    paths:
-      - '**/*.go'
-      - 'go.mod'
-      - 'go.sum'
-      - 'tests/go.mod'
-      - '.github/workflows/build-companion.yml'
-  workflow_dispatch:
 permissions:
   contents: read
 jobs:

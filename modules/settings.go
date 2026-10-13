@@ -3,6 +3,7 @@ package modules
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -46,7 +47,17 @@ func (c *settings) normalizeApplicationID() {
 		c.ApplicationID = ""
 	}
 }
-func (p paths) settingsFolder() string { return filepath.Join(p.config, "discord-vlc-rpc") }
+
+// Application data belongs to this user's app configuration folder, independent
+// of the VLC installation and selected VLC configuration profile.
+func applicationConfigFolder() string {
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(base, "discord-vlc-rpc")
+}
+func (p paths) settingsFolder() string { return applicationConfigFolder() }
 func (p paths) settingsFile() string   { return filepath.Join(p.settingsFolder(), "config.json") }
 func (p paths) indexFolder(c settings) string {
 	if c.IndexPath != "" {
@@ -82,6 +93,9 @@ func validateSettings(c settings) error {
 }
 func loadSettings(p paths) (settings, error) {
 	c := defaults()
+	if p.settingsFolder() == "" {
+		return c, errors.New("Cannot determine the application configuration directory")
+	}
 	err := readJSON(p.settingsFile(), 65536, &c)
 	if err != nil {
 		return c, err
@@ -90,6 +104,9 @@ func loadSettings(p paths) (settings, error) {
 	return c, validateSettings(c)
 }
 func saveSettings(p paths, c settings) error {
+	if p.settingsFolder() == "" {
+		return errors.New("Cannot determine the application configuration directory")
+	}
 	c.normalizeApplicationID()
 	if err := validateSettings(c); err != nil {
 		return err
@@ -101,6 +118,9 @@ func saveSettings(p paths, c settings) error {
 	return atomicWrite(p.settingsFile(), append(b, '\n'), 0600)
 }
 func initSettings(p paths) error {
+	if p.settingsFolder() == "" {
+		return errors.New("Cannot determine the application configuration directory")
+	}
 	if exists(p.settingsFile()) {
 		c := defaults()
 		if err := readJSON(p.settingsFile(), 65536, &c); err != nil {
