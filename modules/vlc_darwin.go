@@ -48,7 +48,6 @@ func runningVLCProcesses() ([]vlcProcess, error) {
 		if name != "vlc" {
 			continue
 		}
-		p.pid = pid
 		// Only needed for an explicit relative --config; lsof's name field preserves spaces.
 		if configArgumentRelative(p.args) {
 			cwdCmd := exec.CommandContext(ctx, "/usr/sbin/lsof", "-a", "-p", value, "-d", "cwd", "-Fn")

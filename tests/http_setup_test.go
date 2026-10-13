@@ -131,3 +131,48 @@ func TestHTTPInvalidPortsAndReadLimit(t *testing.T) {
 		t.Fatal("config read unbounded")
 	}
 }
+
+func TestSharedVLCHTTPPoliciesPreserveLimitsAndErrors(t *testing.T) {
+	valid := `{"version":"3.0.24","apiversion":3,"state":"playing"}`
+	for _, test := range []struct {
+		name                            string
+		status                          int
+		body, probeError, playbackError string
+	}{
+		{"valid", 200, valid, "", ""},
+		{"authentication", 401, "", "VLC HTTP authentication failed; restart VLC to use its saved password", "VLC HTTP password rejected; restart VLC"},
+		{"service error", 503, "", "VLC HTTP endpoint did not return playback status", "VLC HTTP status failed"},
+		{"invalid JSON", 200, "{", "The local HTTP endpoint is not a VLC status interface", "Invalid VLC HTTP JSON"},
+		{"probe limit", 200, valid + strings.Repeat(" ", 32768), "VLC HTTP status response is invalid", ""},
+		{"playback limit", 200, valid + strings.Repeat(" ", 1024*1024), "VLC HTTP status response is invalid", "VLC HTTP response exceeds limit"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(test.status)
+				fmt.Fprint(w, test.body)
+			}))
+			defer server.Close()
+			options := map[string]string{"http-port": strings.Split(server.URL, ":")[2]}
+			check := func(err error, want string) {
+				t.Helper()
+				if want == "" {
+					if err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+				if err == nil || err.Error() != want {
+					t.Fatalf("error = %v, want %q", err, want)
+				}
+			}
+			check(probeVLCHTTP(context.Background(), options), test.probeError)
+			client := localHTTPClient()
+			defer client.CloseIdleConnections()
+			var status vlcStatus
+			check(vlcHTTP(context.Background(), client, options, "status.json", &status), test.playbackError)
+			if test.playbackError == "" && (!status.valid() || status.State != "playing") {
+				t.Fatal("embedded VLC identity was not decoded", status)
+			}
+		})
+	}
+}

@@ -60,6 +60,22 @@ type lookupResult struct {
 	err      error
 }
 
+// Only metadata inputs invalidate a lookup. Presence presentation and startup
+// preferences are applied separately without discarding a match or pending work.
+type lookupConfiguration struct {
+	apiKey, language, posterFit, indexPath, cachePath string
+	episodeLookup, indexEnabled                       bool
+	cacheDays                                         int
+}
+
+func metadataConfiguration(p paths, c settings) lookupConfiguration {
+	return lookupConfiguration{
+		apiKey: c.APIKey, language: c.Language, posterFit: c.PosterFit,
+		indexPath: p.indexFolder(c), cachePath: p.cacheFolder(c),
+		episodeLookup: c.EpisodeLookup, indexEnabled: c.IndexEnabled, cacheDays: c.CacheDays,
+	}
+}
+
 func (s *service) run(parent context.Context) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
@@ -122,6 +138,8 @@ func (s *service) run(parent context.Context) error {
 	}
 	client := &playbackClient{}
 	chapterLabels := &chapterCache{}
+	indexResults := &indexSearchCache{}
+	seasons := &seasonCache{}
 	results := make(chan lookupResult, 2)
 	indexDone := make(chan error, 1)
 	var lookupCancel, indexCancel context.CancelFunc
@@ -139,11 +157,18 @@ func (s *service) run(parent context.Context) error {
 			indexCancel()
 		}
 	}()
-	key, lastConfig, lookupStatus, indexScope := "", "", "Filename only", ""
+	key, lookupStatus, indexScope := "", "Filename only", ""
+	// Invalidate a request once, even if multiple changes occur in one cycle.
+	invalidateLookup := func() {
+		if key != "" || lookupCancel != nil {
+			cancelLookup()
+		}
+		key = ""
+	}
+	var lastLookupConfig lookupConfiguration
 	var hit *metadataHit
 	var chapters []chapter
 	nextLookup, nextIndex := time.Time{}, time.Time{}
-	configHash := ""
 	indexRunning := false
 	forceIndex := false
 	poll := vlcPollBackoff{}
@@ -159,28 +184,24 @@ func (s *service) run(parent context.Context) error {
 		case <-s.refresh:
 			forceReload = true
 			poll.success()
-			cancelLookup()
-			key = ""
+			invalidateLookup()
 		case <-s.buildIndex:
 			nextIndex = time.Time{}
 			forceIndex = true
 		}
-		if latest, e, changed := settingsCache.read(forceReload); e == nil {
+		if latest, e, _ := settingsCache.read(forceReload); e == nil {
 			c = latest
-			if changed || configHash == "" {
-				body, _ := json.Marshal(c)
-				configHash = string(body)
-			}
 		} else {
 			s.state("", "Invalid configuration; keeping last valid settings", "")
 		}
 		_, _, _, noPresence, noIndex := s.details()
-		if configHash != lastConfig {
-			cancelLookup()
-			key = ""
-			lastConfig = configHash
-		}
 		activeIndex := c.IndexEnabled && !noIndex && c.APIKey != ""
+		lookupConfig := c
+		lookupConfig.IndexEnabled = activeIndex
+		if latest := metadataConfiguration(s.paths, lookupConfig); latest != lastLookupConfig {
+			invalidateLookup()
+			lastLookupConfig = latest
+		}
 		scope := s.paths.indexFolder(c)
 		if (!activeIndex || scope != indexScope) && indexRunning {
 			indexCancel()
@@ -226,8 +247,7 @@ func (s *service) run(parent context.Context) error {
 		if !c.Enabled || noPresence {
 			client.clock = playbackClock{}
 			poll.delay = 5 * time.Second
-			cancelLookup()
-			key = ""
+			invalidateLookup()
 			hit = nil
 			publish(nil)
 			s.state("Presence disabled", "", "")
@@ -236,8 +256,7 @@ func (s *service) run(parent context.Context) error {
 		options, e, _ := vlcCache.read(forceReload)
 		if e != nil {
 			client.clock = playbackClock{}
-			cancelLookup()
-			key = ""
+			invalidateLookup()
 			hit = nil
 			publish(nil)
 			poll.failed()
@@ -247,8 +266,7 @@ func (s *service) run(parent context.Context) error {
 		snapshot, parsed, e := client.sample(ctx, options, c)
 		if e != nil {
 			client.clock = playbackClock{}
-			cancelLookup()
-			key = ""
+			invalidateLookup()
 			hit = nil
 			publish(nil)
 			poll.failed()
@@ -260,8 +278,7 @@ func (s *service) run(parent context.Context) error {
 			poll.stopped()
 		}
 		if snapshot == nil {
-			cancelLookup()
-			key = ""
+			invalidateLookup()
 			hit = nil
 			publish(nil)
 			s.state("Stopped, ignored or network media", "", "")
@@ -269,17 +286,16 @@ func (s *service) run(parent context.Context) error {
 		}
 		uri := text(snapshot.Media, "uri")
 		if uri == "" {
-			cancelLookup()
-			key = ""
+			invalidateLookup()
 			hit = nil
 			chapters = nil
 			publish(makeActivity(snapshot))
 			s.state("Idle", "Filename only", "")
 			continue
 		}
-		currentKey := uri + "\x00" + cacheKey(parsed, c) + "\x00" + configHash
+		currentKey := uri + "\x00" + cacheKey(parsed, lookupConfig)
 		if currentKey != key {
-			cancelLookup()
+			invalidateLookup()
 			key = currentKey
 			hit = nil
 			chapters = nil
@@ -323,8 +339,7 @@ func (s *service) run(parent context.Context) error {
 			lookupID++
 			requestID := lookupID
 			tag := key
-			cfg := c
-			cfg.IndexEnabled = activeIndex
+			cfg := lookupConfig
 			p := s.paths
 			path, _ := localMediaPath(uri)
 			lookupStatus = "Looking up metadata"
@@ -333,7 +348,9 @@ func (s *service) run(parent context.Context) error {
 				lookup := s.lookup
 				if lookup == nil {
 					lookup = func(ctx context.Context, p paths, c settings, parsed parsedMedia, path string) (*metadataHit, []chapter, error) {
-						h, err := newTMDB(p, c).lookup(ctx, parsed)
+						tmdb := newTMDB(p, c)
+						tmdb.indexResults, tmdb.seasons = indexResults, seasons
+						h, err := tmdb.lookup(ctx, parsed)
 						return h, chapterLabels.get(ctx, path), err
 					}
 				}
