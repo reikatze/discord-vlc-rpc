@@ -9,6 +9,14 @@ Passed here:
 - Go tests with the race detector and Go vet.
 - End-to-end mock VLC HTTP to Discord IPC: playback, paused timestamps, ignored
   directory clearing and prevention of private activity returning.
+- Movie and TV episode fixtures exercise authenticated VLC sampling, filename parsing,
+  TMDb lookup and the complete decoded Discord `SET_ACTIVITY` payload. They verify
+  titles, episode names/counts, poster or episode-still URLs, raw/fitted artwork,
+  artwork hover text, badges, TMDb links, activity type, display mode, process ID,
+  nonce and exact elapsed/remaining timestamps at normal and double speed. Seek,
+  pause, buffering and resume checks use a fixed clock. These run in the normal
+  suite over the IPC mock harness and in desktop integration over native IPC;
+  metadata and artwork responses are mocked, with no public network dependency.
 - Filename/episode/year parsing and ignored-path boundaries.
 - Authenticated HTTP probing, redirect rejection, deadlines, settings preservation,
   backup accuracy, generated passwords, duplicate keys and idempotence.
