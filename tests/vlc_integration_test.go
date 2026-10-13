@@ -42,6 +42,35 @@ func integrationVLCBinary(t *testing.T) string {
 	return ""
 }
 
+// macOS VLC does not expose the Windows/D-Bus single-instance option.
+func integrationVLCArguments(goos, configFile, media, port string) []string {
+	args := []string{"--intf=dummy", "--extraintf=http", "--http-host=127.0.0.1", "--http-port=" + port, "--http-password=ci-local-password", "--aout=dummy", "--vout=dummy", "--no-video", "--no-media-library", "--no-osd", "--config=" + configFile, "--quiet"}
+	if goos != "darwin" {
+		args = append(args, "--no-one-instance")
+	}
+	return append(args, media)
+}
+
+func TestIntegrationVLCPlatformArguments(t *testing.T) {
+	for _, goos := range []string{"linux", "windows", "darwin"} {
+		t.Run(goos, func(t *testing.T) {
+			args := integrationVLCArguments(goos, "isolated config/vlcrc", "CI Playback.wav", "12345")
+			found := false
+			for _, arg := range args {
+				if arg == "--no-one-instance" {
+					found = true
+				}
+			}
+			if found != (goos != "darwin") {
+				t.Fatal("incorrect single-instance option:", args)
+			}
+			if args[len(args)-1] != "CI Playback.wav" {
+				t.Fatal("media must follow the options")
+			}
+		})
+	}
+}
+
 // A local, deterministic 180-second PCM WAV needs no codecs or generated fixtures
 // in the repository, and lets VLC's clock advance with dummy audio output.
 func writeIntegrationMedia(path string) error {
@@ -99,7 +128,7 @@ func TestRealVLCPlaybackToNativeDiscordIPC(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer logFile.Close()
-	cmd := exec.CommandContext(vlcCtx, binary, "--intf=dummy", "--extraintf=http", "--http-host=127.0.0.1", "--http-port="+strconv.Itoa(port), "--http-password=ci-local-password", "--aout=dummy", "--vout=dummy", "--no-video", "--no-one-instance", "--no-media-library", "--no-osd", "--config="+p.vlcConfigFile(), "--quiet", media)
+	cmd := exec.CommandContext(vlcCtx, binary, integrationVLCArguments(runtime.GOOS, p.vlcConfigFile(), media, strconv.Itoa(port))...)
 	configureChild(cmd)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	cmd.WaitDelay = time.Second
