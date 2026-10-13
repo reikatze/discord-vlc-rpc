@@ -4,7 +4,6 @@ import (
 	"container/list"
 	"context"
 	"crypto/sha256"
-	"crypto/sha3"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -432,9 +431,8 @@ func (t *tmdbClient) season(ctx context.Context, show int64, season int) (*seaso
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// Hash only to isolate this in-memory cache by API credential; not password storage.
-	credential := sha3.Sum256([]byte(t.config.APIKey))
-	key := seasonKey{t.base, t.config.Language, hex.EncodeToString(credential[:]), show, season}
+	// The credential scopes this bounded, in-memory cache and is never serialized or logged.
+	key := seasonKey{t.base, t.config.Language, t.config.APIKey, show, season}
 	if cached := t.seasons.get(key); cached != nil {
 		return cached, nil
 	}
