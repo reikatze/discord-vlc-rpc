@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,9 @@ type playbackClient struct {
 	client        *http.Client
 	parsedPath    string
 	parsed        parsedMedia
+	directoryPath string
+	directory     directoryTitle
+	ignored       ignoredPathCache
 	clock         playbackClock
 	now           func() time.Time
 }
@@ -66,26 +70,47 @@ func localMediaPath(uri string) (string, bool) {
 	}
 	return filepath.FromSlash(path), path != ""
 }
-func ignoredPath(path string, ignored []string) bool {
-	clean := func(s string) string {
-		s = strings.ReplaceAll(s, `\`, "/")
-		s = filepath.ToSlash(filepath.Clean(s))
-		if runtime.GOOS == "windows" || len(s) > 1 && s[1] == ':' || strings.HasPrefix(s, "//") {
-			s = strings.ToLower(s)
-		}
-		return strings.TrimRight(s, "/")
+func cleanIgnoredPath(s string) string {
+	s = strings.ReplaceAll(s, `\`, "/")
+	s = filepath.ToSlash(filepath.Clean(s))
+	if runtime.GOOS == "windows" || len(s) > 1 && s[1] == ':' || strings.HasPrefix(s, "//") {
+		s = strings.ToLower(s)
 	}
-	path = clean(path)
-	for _, entry := range ignored {
-		if p, ok := localMediaPath(entry); ok {
-			entry = p
-		}
-		entry = clean(entry)
-		if entry != "" && (path == entry || strings.HasPrefix(path, entry+"/")) {
-			return true
+	return strings.TrimRight(s, "/")
+}
+
+type ignoredPathCache struct {
+	loaded                 bool
+	configured, normalized []string
+	path                   string
+	ignored                bool
+}
+
+func (c *ignoredPathCache) contains(path string, configured []string) bool {
+	changed := !c.loaded || !slices.Equal(c.configured, configured)
+	if changed {
+		c.configured = slices.Clone(configured)
+		c.normalized = make([]string, 0, len(configured))
+		for _, entry := range configured {
+			if p, ok := localMediaPath(entry); ok {
+				entry = p
+			}
+			if entry = cleanIgnoredPath(entry); entry != "" {
+				c.normalized = append(c.normalized, entry)
+			}
 		}
 	}
-	return false
+	if changed || path != c.path {
+		c.path, c.ignored, c.loaded = path, false, true
+		clean := cleanIgnoredPath(path)
+		for _, entry := range c.normalized {
+			if clean == entry || strings.HasPrefix(clean, entry+"/") {
+				c.ignored = true
+				break
+			}
+		}
+	}
+	return c.ignored
 }
 func (c *playbackClient) sample(ctx context.Context, options map[string]string, config settings) (*Snapshot, parsedMedia, error) {
 	if c.client == nil {
@@ -121,7 +146,7 @@ func (c *playbackClient) sample(ctx context.Context, options map[string]string, 
 		c.pollPlaylist = time.Now()
 	}
 	path, ok := localMediaPath(c.uri)
-	if !ok || ignoredPath(path, config.Ignored) {
+	if !ok || c.ignored.contains(path, config.Ignored) {
 		c.clock = playbackClock{}
 		return nil, parsedMedia{}, nil
 	}
@@ -222,7 +247,12 @@ func (c *playbackClient) time() time.Time {
 }
 func (c *playbackClient) parse(path string) parsedMedia {
 	if c.parsedPath != path {
-		c.parsedPath, c.parsed = path, parseFilename(path)
+		normalized := strings.ReplaceAll(path, `\`, "/")
+		dir := filepath.Dir(normalized)
+		if dir != c.directoryPath {
+			c.directoryPath, c.directory = dir, parseDirectoryTitle(dir)
+		}
+		c.parsedPath, c.parsed = path, parseFilenameWithDirectory(normalized, c.directory)
 	}
 	return c.parsed
 }

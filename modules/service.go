@@ -12,13 +12,13 @@ import (
 )
 
 type service struct {
-	rpcDial                           func() (net.Conn, error)
-	lookup                            func(context.Context, paths, settings, parsedMedia, string) (*metadataHit, []chapter, error)
-	paths                             paths
-	mu                                sync.RWMutex
-	status, playback, index, metadata string
-	noPresence, noIndex               bool
-	refresh, buildIndex               chan struct{}
+	rpcDial                            func() (net.Conn, error)
+	lookup                             func(context.Context, paths, settings, parsedMedia, string) (*metadataHit, []chapter, error)
+	paths                              paths
+	mu                                 sync.RWMutex
+	status, playback, index, metadata  string
+	noPresence, noIndex                bool
+	refresh, buildIndex, clearMetadata chan struct{}
 }
 
 func (s *service) setStatus(v string) { s.mu.Lock(); s.status = v; s.mu.Unlock() }
@@ -74,6 +74,27 @@ func metadataConfiguration(p paths, c settings) lookupConfiguration {
 		indexPath: p.indexFolder(c), cachePath: p.cacheFolder(c),
 		episodeLookup: c.EpisodeLookup, indexEnabled: c.IndexEnabled, cacheDays: c.CacheDays,
 	}
+}
+
+type lookupMediaOptions struct {
+	language, posterFit         string
+	episodeLookup, indexEnabled bool
+	cacheDays                   int
+}
+type lookupMediaIdentity struct {
+	uri     string
+	media   parsedMedia
+	options lookupMediaOptions
+	value   string
+}
+
+func (m *lookupMediaIdentity) key(uri string, media parsedMedia, c settings) string {
+	options := lookupMediaOptions{c.Language, c.PosterFit, c.EpisodeLookup, c.IndexEnabled, c.CacheDays}
+	if m.value == "" || m.uri != uri || m.media != media || m.options != options {
+		m.uri, m.media, m.options = uri, media, options
+		m.value = uri + "\x00" + cacheKey(media, c)
+	}
+	return m.value
 }
 
 func (s *service) run(parent context.Context) error {
@@ -140,6 +161,9 @@ func (s *service) run(parent context.Context) error {
 	chapterLabels := &chapterCache{}
 	indexResults := &indexSearchCache{}
 	seasons := &seasonCache{}
+	shows := &showMatchCache{}
+	maintenance := &metadataMaintenance{}
+	mediaIdentity := &lookupMediaIdentity{}
 	results := make(chan lookupResult, 2)
 	indexDone := make(chan error, 1)
 	var lookupCancel, indexCancel context.CancelFunc
@@ -185,6 +209,11 @@ func (s *service) run(parent context.Context) error {
 			forceReload = true
 			poll.success()
 			invalidateLookup()
+		case <-s.clearMetadata:
+			forceReload = true
+			poll.success()
+			invalidateLookup()
+			shows, seasons = &showMatchCache{}, &seasonCache{}
 		case <-s.buildIndex:
 			nextIndex = time.Time{}
 			forceIndex = true
@@ -293,7 +322,7 @@ func (s *service) run(parent context.Context) error {
 			s.state("Idle", "Filename only", "")
 			continue
 		}
-		currentKey := uri + "\x00" + cacheKey(parsed, lookupConfig)
+		currentKey := mediaIdentity.key(uri, parsed, lookupConfig)
 		if currentKey != key {
 			invalidateLookup()
 			key = currentKey
@@ -320,12 +349,7 @@ func (s *service) run(parent context.Context) error {
 						if hit != nil {
 							lookupStatus = "TMDb matched"
 						}
-						nextLookup = time.Now().Add(time.Duration(c.CacheDays) * 24 * time.Hour)
-						if hit == nil {
-							nextLookup = time.Now().Add(time.Hour)
-						} else if !hit.Complete {
-							nextLookup = time.Now().Add(10 * time.Minute)
-						}
+						nextLookup = metadataExpiry(hit, c, time.Now())
 					}
 				}
 			default:
@@ -342,6 +366,7 @@ func (s *service) run(parent context.Context) error {
 			cfg := lookupConfig
 			p := s.paths
 			path, _ := localMediaPath(uri)
+			requestSeasons, requestShows := seasons, shows
 			lookupStatus = "Looking up metadata"
 			go func() {
 				defer stop()
@@ -349,7 +374,8 @@ func (s *service) run(parent context.Context) error {
 				if lookup == nil {
 					lookup = func(ctx context.Context, p paths, c settings, parsed parsedMedia, path string) (*metadataHit, []chapter, error) {
 						tmdb := newTMDB(p, c)
-						tmdb.indexResults, tmdb.seasons = indexResults, seasons
+						tmdb.indexResults, tmdb.seasons = indexResults, requestSeasons
+						tmdb.shows, tmdb.maintenance = requestShows, maintenance
 						h, err := tmdb.lookup(ctx, parsed)
 						return h, chapterLabels.get(ctx, path), err
 					}

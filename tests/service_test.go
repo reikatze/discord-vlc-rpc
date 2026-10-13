@@ -2,91 +2,33 @@ package modules
 
 import (
 	"context"
-	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func TestStandaloneHTTPToDiscordAndPrivacy(t *testing.T) {
-	var mu sync.Mutex
-	state := "playing"
-	vlc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		if r.URL.Path == "/requests/status.json" {
-			fmt.Fprintf(w, `{"version":"3.0.24","apiversion":3,"state":%q,"time":10,"length":100,"rate":1,"currentplid":1,"information":{"category":{"meta":{"filename":"Movie.2024.mkv"}}}}`, state)
-		} else {
-			fmt.Fprint(w, `{"children":[{"id":1,"uri":"file:///private/Movie.2024.mkv"}]}`)
-		}
-	}))
-	defer vlc.Close()
+	vlc := newPlaybackHTTPFixture(t, playbackFixtureState{filename: "Movie.2024.mkv", uri: "file:///private/Movie.2024.mkv", state: "playing", position: 10, duration: 100, rate: 1}, "")
 	rpc, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rpc.Close()
-	activities := make(chan map[string]any, 16)
-	go func() {
-		connection, err := rpc.Accept()
-		if err != nil {
-			return
-		}
-		defer connection.Close()
-		read := func() (map[string]any, error) {
-			header := make([]byte, 8)
-			if _, e := io.ReadFull(connection, header); e != nil {
-				return nil, e
-			}
-			raw := make([]byte, binary.LittleEndian.Uint32(header[4:]))
-			if _, e := io.ReadFull(connection, raw); e != nil {
-				return nil, e
-			}
-			value := map[string]any{}
-			e := json.Unmarshal(raw, &value)
-			return value, e
-		}
-		if handshake, e := read(); e != nil {
-			return
-		} else if handshake["client_id"] != "123456789" {
-			t.Error("Discord handshake did not use the configured application ID:", handshake)
-			return
-		}
-		ready := []byte(`{"evt":"READY"}`)
-		header := make([]byte, 8)
-		binary.LittleEndian.PutUint32(header, 1)
-		binary.LittleEndian.PutUint32(header[4:], uint32(len(ready)))
-		connection.Write(append(header, ready...))
-		for {
-			value, e := read()
-			if e != nil {
-				return
-			}
-			args, _ := value["args"].(map[string]any)
-			activity, _ := args["activity"].(map[string]any)
-			select {
-			case activities <- activity:
-			default:
-			}
-		}
-	}()
+	mock := newDiscordIPCMock(t, rpc, true)
 	p := testPaths(t)
 	cfg := defaults()
 	cfg.ApplicationID = "123456789"
 	if err := saveSettings(p, cfg); err != nil {
 		t.Fatal(err)
 	}
-	atomicWrite(filepath.Join(p.config, "vlcrc"), []byte("http-port="+strings.Split(vlc.URL, ":")[2]+"\n"), 0600)
+	atomicWrite(filepath.Join(p.config, "vlcrc"), []byte("http-port="+strings.Split(vlc.server.URL, ":")[2]+"\n"), 0600)
 	s := &service{paths: p, refresh: make(chan struct{}, 1), buildIndex: make(chan struct{}, 1), rpcDial: func() (net.Conn, error) { return net.DialTimeout("tcp", rpc.Addr().String(), time.Second) }}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -100,22 +42,13 @@ func TestStandaloneHTTPToDiscordAndPrivacy(t *testing.T) {
 		}
 	}()
 	await := func(predicate func(map[string]any) bool) {
-		deadline := time.After(5 * time.Second)
-		for {
-			select {
-			case activity := <-activities:
-				if predicate(activity) {
-					return
-				}
-			case <-deadline:
-				t.Fatal("expected Discord activity was not received")
-			}
-		}
+		mock.await(t, func(frame ipcMockFrame) bool {
+			activity, ok := mockActivity(frame)
+			return ok && predicate(activity)
+		})
 	}
 	await(func(a map[string]any) bool { return a != nil && a["details"] == "Movie" && a["timestamps"] != nil })
-	mu.Lock()
-	state = "paused"
-	mu.Unlock()
+	vlc.playback("paused", 10, 1)
 	poke(s.refresh)
 	await(func(a map[string]any) bool { return a != nil && a["state"] == "Paused" && a["timestamps"] == nil })
 	c, _ := loadSettings(p)
@@ -123,16 +56,100 @@ func TestStandaloneHTTPToDiscordAndPrivacy(t *testing.T) {
 	saveSettings(p, c)
 	poke(s.refresh)
 	await(func(a map[string]any) bool { return a == nil })
-	for len(activities) > 0 {
-		<-activities
+	for len(mock.frames) > 0 {
+		<-mock.frames
 	}
 	poke(s.refresh)
 	select {
-	case a := <-activities:
-		if a != nil {
+	case frame := <-mock.frames:
+		if a, ok := mockActivity(frame); ok && a != nil {
 			t.Fatal("private activity returned")
 		}
 	case <-time.After(700 * time.Millisecond):
+	}
+}
+
+func TestLookupMediaIdentityReusesKeyAndTracksInputs(t *testing.T) {
+	identity := &lookupMediaIdentity{}
+	parsed := parsedMedia{Title: "Example Show", TV: true, Season: 1, Episode: 1}
+	cfg := defaults()
+	uri := "file:///media/Example.Show.S01E01.mkv"
+	want := uri + "\x00" + cacheKey(parsed, cfg)
+	if identity.key(uri, parsed, cfg) != want {
+		t.Fatal("media key changed")
+	}
+	if allocations := testing.AllocsPerRun(100, func() { identity.key(uri, parsed, cfg) }); allocations != 0 {
+		t.Fatal("warm media identity still hashes/encodes", allocations)
+	}
+	for _, edit := range []func(*settings){
+		func(c *settings) { c.Language = "fr-FR" }, func(c *settings) { c.PosterFit = "raw" },
+		func(c *settings) { c.EpisodeLookup = !c.EpisodeLookup }, func(c *settings) { c.IndexEnabled = !c.IndexEnabled }, func(c *settings) { c.CacheDays++ },
+	} {
+		changed := cfg
+		edit(&changed)
+		if identity.key(uri, parsed, changed) != uri+"\x00"+cacheKey(parsed, changed) {
+			t.Fatal("metadata input did not invalidate media identity")
+		}
+	}
+	parsed.Episode++
+	if identity.key(uri, parsed, cfg) != uri+"\x00"+cacheKey(parsed, cfg) {
+		t.Fatal("parsed media change not reflected")
+	}
+	uri += ".new"
+	if identity.key(uri, parsed, cfg) != uri+"\x00"+cacheKey(parsed, cfg) {
+		t.Fatal("URI change not reflected")
+	}
+}
+
+func TestServiceHonorsEpisodeRefreshExpiry(t *testing.T) {
+	p := testPaths(t)
+	cfg := defaults()
+	cfg.APIKey = "fixture-key"
+	cfg.IndexEnabled = false
+	if err := saveSettings(p, cfg); err != nil {
+		t.Fatal(err)
+	}
+	vlc := newPlaybackHTTPFixture(t, playbackFixtureState{filename: "Show.S01E01.mkv", uri: "file:///media/Show.S01E01.mkv", state: "playing", position: 10, duration: 100, rate: 1}, "")
+	if err := atomicWrite(filepath.Join(p.config, "vlcrc"), []byte("http-port="+vlc.options()["http-port"]+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	requests := make(chan struct{}, 8)
+	var calls atomic.Int32
+	s := &service{paths: p, refresh: make(chan struct{}, 1), buildIndex: make(chan struct{}, 1), clearMetadata: make(chan struct{}, 1), rpcDial: func() (net.Conn, error) { return nil, errors.New("test offline") }}
+	s.lookup = func(context.Context, paths, settings, parsedMedia, string) (*metadataHit, []chapter, error) {
+		expires := time.Now().Add(time.Hour)
+		if calls.Add(1) == 1 {
+			expires = time.Now().Add(2 * time.Second)
+		}
+		requests <- struct{}{}
+		return &metadataHit{Title: "Show", Episode: "01 of 2: One", Complete: true, RefreshAt: expires.Unix()}, nil, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("service did not stop")
+		}
+	}()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-requests:
+		case <-time.After(5 * time.Second):
+			t.Fatal("service retained an expired episode count")
+		}
+	}
+	poke(s.clearMetadata)
+	select {
+	case <-requests:
+	case <-time.After(2 * time.Second):
+		t.Fatal("clear-cache action retained the in-memory match")
 	}
 }
 

@@ -78,14 +78,6 @@ type indexReader struct {
 	block  [4096]byte
 }
 
-func openIndexReader(folder string, kinds ...string) (*indexReader, error) {
-	m, err := readManifest(folder)
-	if err != nil {
-		return nil, err
-	}
-	return openIndexGeneration(folder, m, kinds...)
-}
-
 func openIndexGeneration(folder string, m indexManifest, kinds ...string) (*indexReader, error) {
 	r := &indexReader{media: make(map[string]indexMediaReader)}
 	if len(kinds) == 0 {
@@ -131,22 +123,6 @@ func (r *indexReader) close() {
 	}
 	r.media = nil
 }
-func indexCandidateBatch(folder string, titles, kinds []string) map[string][][]int64 {
-	r, err := openIndexReader(folder, kinds...)
-	if err != nil {
-		return nil
-	}
-	defer r.close()
-	matches := make(map[string][][]int64, len(kinds))
-	for _, kind := range kinds {
-		results := make([][]int64, len(titles))
-		for i, title := range titles {
-			results[i] = r.candidates(title, kind)
-		}
-		matches[kind] = results
-	}
-	return matches
-}
 
 // The cache is shared across media lookups; generation keys prevent stale IDs.
 // Empty successful searches are cached, but damaged/missing indexes are not.
@@ -165,7 +141,7 @@ type indexSearchCache struct {
 
 func (c *indexSearchCache) batch(folder string, titles, kinds []string) map[string][][]int64 {
 	if c == nil {
-		return indexCandidateBatch(folder, titles, kinds)
+		c = &indexSearchCache{}
 	}
 	m, err := readManifest(folder)
 	if err != nil {
@@ -213,11 +189,6 @@ func (c *indexSearchCache) batch(folder string, titles, kinds []string) map[stri
 		matches[kind] = results
 	}
 	return matches
-}
-
-func (r *indexReader) candidates(title, kind string) []int64 {
-	ids, _ := r.searchCandidates(title, kind)
-	return ids
 }
 
 func (r *indexReader) searchCandidates(title, kind string) ([]int64, error) {

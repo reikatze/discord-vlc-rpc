@@ -15,6 +15,22 @@ import (
 	"testing"
 )
 
+func openIndexReader(folder string, kinds ...string) (*indexReader, error) {
+	m, err := readManifest(folder)
+	if err != nil {
+		return nil, err
+	}
+	return openIndexGeneration(folder, m, kinds...)
+}
+
+func (r *indexReader) candidates(title, kind string) []int64 {
+	ids, _ := r.searchCandidates(title, kind)
+	return ids
+}
+
+func indexCandidateBatch(folder string, titles, kinds []string) map[string][][]int64 {
+	return (*indexSearchCache)(nil).batch(folder, titles, kinds)
+}
 func indexCandidates(folder, title, kind string) []int64 {
 	r, err := openIndexReader(folder, kind)
 	if err != nil {

@@ -13,7 +13,7 @@ command-line options, startup discovery and shutdown behavior.
 | `playback.go`, `model.go` | Playback sampling, chapter lookup and presence data |
 | `vlc_http.go` | Shared VLC HTTP transport, authentication, bounded JSON decoding and endpoint identity |
 | `filename.go` | Filename parsing and title matching |
-| `metadata.go`, `index.go` | TMDb requests, metadata caching and local title indexes |
+| `metadata.go`, `metadata_cache.go`, `index.go` | TMDb requests, bounded shared show/season caches, episode freshness, batched disk-cache maintenance and local title indexes |
 | `rpc.go`, `rpc_*.go` | Discord IPC and reconnection |
 | `instance_lock.go`, `instance_lock_windows.go`, `instance_lock_unix.go` | OS-managed instance lock without a TCP listener |
 | `settings.go` | Per-user JSON configuration, independent of VLC profiles |

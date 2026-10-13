@@ -12,7 +12,6 @@ import (
 	"os"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -50,26 +49,7 @@ func testMediaMetadataToDiscordPresence(t *testing.T, native bool) {
 				cfg.APIKey, cfg.IndexEnabled, cfg.PosterFit = "fixture-key", false, fit
 				cfg.LargeImage, cfg.LargeText = "fallback-art", "VLC"
 				cfg.SmallPlaying, cfg.SmallPaused, cfg.SmallIdle = "playing-badge", "paused-badge", "idle-badge"
-				var mu sync.Mutex
-				state, position, rate := "playing", 120., 1.
-				vlc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					_, password, authenticated := r.BasicAuth()
-					if !authenticated || password != "fixture-password" {
-						http.Error(w, "unauthorized", http.StatusUnauthorized)
-						return
-					}
-					mu.Lock()
-					defer mu.Unlock()
-					switch r.URL.Path {
-					case "/requests/status.json":
-						fmt.Fprintf(w, `{"version":"3.0.24","apiversion":3,"state":%q,"time":%g,"length":1800,"rate":%g,"currentplid":7,"information":{"category":{"meta":{"filename":%q,"title":"Incorrect embedded title"}}}}`, state, position, rate, filename)
-					case "/requests/playlist.json":
-						fmt.Fprintf(w, `{"children":[{"id":"7","uri":%q}]}`, "file:///media/"+filename)
-					default:
-						http.NotFound(w, r)
-					}
-				}))
-				defer vlc.Close()
+				vlc := newPlaybackHTTPFixture(t, playbackFixtureState{filename: filename, uri: "file:///media/" + filename, title: "Incorrect embedded title", state: "playing", position: 120, duration: 1800, rate: 1}, "fixture-password")
 				tmdb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.URL.Query().Get("api_key") != cfg.APIKey || r.URL.Query().Get("language") != cfg.Language {
 						http.Error(w, "bad metadata credentials or language", http.StatusUnauthorized)
@@ -113,7 +93,7 @@ func testMediaMetadataToDiscordPresence(t *testing.T, native bool) {
 				defer rpc.close()
 				now := time.Unix(1700000000, 0)
 				playback := &playbackClient{now: func() time.Time { return now }}
-				options := map[string]string{"http-port": strings.Split(vlc.URL, ":")[2], "http-password": "fixture-password"}
+				options := vlc.options()
 				for _, step := range []struct {
 					state          string
 					position, rate float64
@@ -121,9 +101,7 @@ func testMediaMetadataToDiscordPresence(t *testing.T, native bool) {
 					{"playing", 120, 1}, {"playing", 600, 1}, {"paused", 600, 1},
 					{"playing", 600, 2}, {"buffering", 610, 2}, {"playing", 610, 2},
 				} {
-					mu.Lock()
-					state, position, rate = step.state, step.position, step.rate
-					mu.Unlock()
+					vlc.playback(step.state, step.position, step.rate)
 					// Fixed time makes current and remaining-time assertions exact, not sleep-based.
 					snapshot, parsed, err := playback.sample(context.Background(), options, cfg)
 					if err != nil || snapshot == nil {

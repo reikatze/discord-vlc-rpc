@@ -14,6 +14,65 @@ import (
 	"time"
 )
 
+func parseFilename(path string) parsedMedia {
+	path = strings.ReplaceAll(path, `\`, "/")
+	return parseFilenameWithDirectory(path, parseDirectoryTitle(filepath.Dir(path)))
+}
+func ignoredPath(path string, ignored []string) bool {
+	return (&ignoredPathCache{}).contains(path, ignored)
+}
+
+func TestIgnoredPathCacheInvalidatesOnPathAndInPlaceConfigurationEdits(t *testing.T) {
+	cache := &ignoredPathCache{}
+	ignored := []string{"file:///media/Private"}
+	if !cache.contains("/media/Private/Movie.mkv", ignored) || cache.contains("/media/PrivateOther/Movie.mkv", ignored) {
+		t.Fatal("ignored directory boundary changed")
+	}
+	path := "/media/Private/Movie.mkv"
+	cache.contains(path, ignored)
+	if allocations := testing.AllocsPerRun(100, func() { cache.contains(path, ignored) }); allocations != 0 {
+		t.Fatal("unchanged privacy checks allocate", allocations)
+	}
+	ignored[0] = "/media/Other"
+	if cache.contains(path, ignored) || !cache.contains("/media/Other/Movie.mkv", ignored) {
+		t.Fatal("in-place configuration edit did not invalidate eligibility")
+	}
+	if cache.contains("/media/Other/Movie.mkv", nil) {
+		t.Fatal("removed exclusions remained active")
+	}
+}
+
+func TestFilenameDirectoryReusePreservesParsing(t *testing.T) {
+	c := &playbackClient{}
+	for _, path := range []string{
+		"/media/Example Show (2024)/Example.Show.S01E01.mkv",
+		"/media/Example Show (2024)/Example.Show.S01E02.mkv",
+		"/media/Other Show (2023)/Other.Show.S02E01.mkv",
+		`C:\media\Example Show (2024)\Example.Show.S01E03.mkv`,
+		"/media/No Year/Show.S01E01.mkv",
+	} {
+		if got, want := c.parse(path), parseFilename(path); got != want {
+			t.Fatal("directory reuse changed parsing", path, got, want)
+		}
+	}
+}
+
+func BenchmarkSequentialFilenameDirectoryReuse(b *testing.B) {
+	paths := []string{"/media/Example Show (2024)/Example.Show.S01E01.mkv", "/media/Example Show (2024)/Example.Show.S01E02.mkv"}
+	b.Run("uncached-directory", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			parseFilename(paths[i%2])
+		}
+	})
+	b.Run("cached-directory", func(b *testing.B) {
+		c := &playbackClient{}
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			c.parse(paths[i%2])
+		}
+	})
+}
 func TestPlaybackHTTPMetadataPrivacyAndSeek(t *testing.T) {
 	uri := "file:///private/Show.S02E05.mkv"
 	state := "playing"

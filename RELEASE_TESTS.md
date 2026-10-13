@@ -18,6 +18,18 @@ Passed here:
   suite over the IPC mock harness and in desktop integration over native IPC;
   metadata and artwork responses are mocked, with no public network dependency.
 - Filename/episode/year parsing and ignored-path boundaries.
+- Ignored-path cache invalidation for media changes, removed exclusions and
+  in-place configuration edits; warm checks allocate no memory.
+- Sequential episode directory parsing matches uncached parsing; year regex
+  results are reused. Warm media identities avoid JSON encoding and hashing.
+- Shared show searches/details and season responses reduce repeat episode requests;
+  unused show posters are not probed when an episode still is available.
+- Show-cache credential/language/index-generation scopes, expiry, outage recovery,
+  concurrent access and the 64-entry bound.
+- Episode count expiry is honored by disk caching and the running service;
+  ordinary movie lifetimes and partial-match retry intervals are preserved.
+- Disk-cache maintenance batches 64 writes, observes its hourly deadline, keeps
+  its folder bookkeeping bounded and preserves unrelated files when pruning.
 - Authenticated HTTP probing, redirect rejection, deadlines, settings preservation,
   backup accuracy, generated passwords, duplicate keys and idempotence.
 - TMDb episode names/counts/stills, disk caching, misses, rate limits, cancellation
@@ -200,3 +212,8 @@ argument tests cover this distinction. Integration jobs now use verbose output
 to show each test result. The generated media is sought through rather than
 played to completion, so a roughly five-second integration run is expected.
 The corrected macOS runtime check remains pending a new workflow run.
+
+The index's cached and uncached batch paths use the same search implementation.
+Test-only index adapters and filename/privacy wrappers live in `tests/`.
+Playback service and metadata-payload tests share an authenticated VLC fixture
+and the Discord IPC mock while retaining their distinct lifecycle assertions.

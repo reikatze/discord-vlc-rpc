@@ -61,7 +61,7 @@ func Run(trayIcon []byte) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	go p.trackVLCFolder(ctx)
-	s := &service{paths: p, status: "Starting", refresh: make(chan struct{}, 1), buildIndex: make(chan struct{}, 1)}
+	s := &service{paths: p, status: "Starting", refresh: make(chan struct{}, 1), buildIndex: make(chan struct{}, 1), clearMetadata: make(chan struct{}, 1)}
 	done := make(chan error, 1)
 	go func() { done <- s.run(ctx); cancel() }()
 	if *headless {
@@ -150,7 +150,9 @@ func Run(trayIcon []byte) {
 					err = clearMetadataCache(p.cacheFolder(c))
 				}
 				notify(err)
-				poke(s.refresh)
+				if err == nil {
+					poke(s.clearMetadata)
+				}
 			}()
 		})
 		menu.Add("Open VLC folder", func() { go func() { notify(openFolder(p.vlcFolder())) }() })
