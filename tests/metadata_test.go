@@ -152,13 +152,15 @@ func TestTMDbIndexBatchClosesBeforeRequestsAndFallsBack(t *testing.T) {
 }
 
 func TestTMDbSeasonReuseAcrossEpisodes(t *testing.T) {
-	var seasonRequests, episodeRequests atomic.Int32
+	var seasonRequests, episodeRequests, searches, details, posterProbes atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/search/tv":
+			searches.Add(1)
 			fmt.Fprint(w, `{"results":[{"id":42,"name":"Example Show","original_name":"Example Show","first_air_date":"2024-01-01"}]}`)
 		case "/tv/42":
-			fmt.Fprint(w, `{"id":42,"name":"Example Show","first_air_date":"2024-01-01"}`)
+			details.Add(1)
+			fmt.Fprint(w, `{"id":42,"name":"Example Show","first_air_date":"2024-01-01","poster_path":"/show.jpg"}`)
 		case "/tv/42/season/2":
 			seasonRequests.Add(1)
 			fmt.Fprint(w, `{"episodes":[{"season_number":2,"episode_number":1,"name":"First","still_path":"/first.jpg"},{"season_number":2,"episode_number":2,"name":"Second","still_path":"/second.jpg"}]}`)
@@ -173,20 +175,32 @@ func TestTMDbSeasonReuseAcrossEpisodes(t *testing.T) {
 	c := defaults()
 	c.APIKey = "testkey"
 	c.IndexEnabled = false
-	c.PosterFit = "raw"
+	c.PosterFit = "contain"
 	p := testPaths(t)
 	cache := &seasonCache{}
+	shows := &showMatchCache{}
 	for n, name := range []string{"First", "Second"} {
 		client := newTMDB(p, c)
 		client.base = server.URL
 		client.seasons = cache
+		client.shows = shows
+		client.client = &http.Client{Transport: metadataFixtureTransport(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Host == "wsrv.nl" {
+				posterProbes.Add(1)
+				return nil, fmt.Errorf("unused poster unavailable")
+			}
+			return server.Client().Transport.RoundTrip(r)
+		})}
 		hit, err := client.lookup(context.Background(), parsedMedia{Title: "Example Show", Year: "2024", TV: true, Season: 2, Episode: n + 1})
-		if err != nil || hit == nil || hit.Episode != fmt.Sprintf("%02d of 2: %s", n+1, name) || !strings.Contains(hit.Poster, strings.ToLower(name)+".jpg") {
+		if err != nil || hit == nil || !hit.Complete || hit.Episode != fmt.Sprintf("%02d of 2: %s", n+1, name) || !strings.Contains(hit.Poster, strings.ToLower(name)+".jpg") {
 			t.Fatal(hit, err)
 		}
 	}
 	if seasonRequests.Load() != 1 || episodeRequests.Load() != 0 {
 		t.Fatal("season was not reused", seasonRequests.Load(), episodeRequests.Load())
+	}
+	if searches.Load() != 1 || details.Load() != 1 || posterProbes.Load() != 0 {
+		t.Fatal("show metadata was repeated or unused artwork was probed", searches.Load(), details.Load(), posterProbes.Load())
 	}
 }
 

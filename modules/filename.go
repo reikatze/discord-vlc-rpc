@@ -75,7 +75,8 @@ func stripRelease(s string) string {
 }
 func extractYear(s string) (string, int) {
 	year, start := "", -1
-	for _, loc := range yearToken.FindAllStringIndex(s, -1) {
+	matches := yearToken.FindAllStringIndex(s, -1)
+	for _, loc := range matches {
 		a, b := loc[0], loc[1]
 		if a > 0 && s[a-1] == '(' && b < len(s) && s[b] == ')' {
 			year, start = s[a:b], a-1
@@ -84,7 +85,7 @@ func extractYear(s string) (string, int) {
 	if start >= 0 {
 		return year, start
 	}
-	for _, loc := range yearToken.FindAllStringIndex(s, -1) {
+	for _, loc := range matches {
 		a, b := loc[0], loc[1]
 		if a > 0 && s[a-1] >= '0' && s[a-1] <= '9' || b < len(s) && s[b] >= '0' && s[b] <= '9' {
 			continue
@@ -98,8 +99,21 @@ func extractYear(s string) (string, int) {
 func normalizeTitle(s string) string {
 	return trimTitle(strings.Trim(titleSeparators.Replace(stripRelease(s)), " -"))
 }
-func parseFilename(path string) parsedMedia {
-	path = strings.ReplaceAll(path, `\`, "/")
+
+type directoryTitle struct{ title, year string }
+
+func parseDirectoryTitle(path string) directoryTitle {
+	dir := filepath.Base(path)
+	year, at := extractYear(dir)
+	if at >= 0 {
+		dir = dir[:at]
+	}
+	if year == "" {
+		return directoryTitle{}
+	}
+	return directoryTitle{normalizeTitle(dir), year}
+}
+func parseFilenameWithDirectory(path string, directory directoryTitle) parsedMedia {
 	name := filepath.Base(path)
 	name = strings.TrimSuffix(name, filepath.Ext(name))
 	name = stripRelease(name)
@@ -130,16 +144,9 @@ func parseFilename(path string) parsedMedia {
 		cut = at
 	}
 	p.Title = normalizeTitle(name[:cut])
-	dir := filepath.Base(filepath.Dir(path))
-	dy, da := extractYear(dir)
-	if da >= 0 {
-		dir = dir[:da]
-	}
-	if dy != "" {
-		p.Directory = normalizeTitle(dir)
-	}
+	p.Directory = directory.title
 	if p.Year == "" {
-		p.Year = dy
+		p.Year = directory.year
 	}
 	if p.Title == "" {
 		p.Title = p.Directory

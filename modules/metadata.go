@@ -24,6 +24,7 @@ import (
 type metadataHit struct {
 	Title, Subtitle, Episode, Poster, URL, EpisodeURL string
 	Complete                                          bool
+	RefreshAt                                         int64 `json:",omitempty"`
 }
 type cacheEntry struct {
 	Expires int64        `json:"expires"`
@@ -37,10 +38,13 @@ type tmdbClient struct {
 	requests     map[string]map[string]any
 	indexResults *indexSearchCache
 	seasons      *seasonCache
+	shows        *showMatchCache
+	maintenance  *metadataMaintenance
+	now          func() time.Time
 }
 
 func newTMDB(p paths, c settings) *tmdbClient {
-	return &tmdbClient{client: &http.Client{Timeout: 8 * time.Second}, base: "https://api.themoviedb.org/3", cache: p.cacheFolder(c), index: p.indexFolder(c), config: c, requests: map[string]map[string]any{}}
+	return &tmdbClient{client: &http.Client{Timeout: 8 * time.Second}, base: "https://api.themoviedb.org/3", cache: p.cacheFolder(c), index: p.indexFolder(c), config: c, requests: map[string]map[string]any{}, indexResults: &indexSearchCache{}, shows: &showMatchCache{}, maintenance: &metadataMaintenance{}}
 }
 func cacheKey(p parsedMedia, c settings) string {
 	b, _ := json.Marshal([]any{p, c.Language, c.EpisodeLookup, c.PosterFit, c.CacheDays, c.IndexEnabled})
@@ -100,7 +104,7 @@ func dateYear(s string) string {
 	return ""
 }
 func recordTitle(r map[string]any) string { return first(text(r, "title"), text(r, "name")) }
-func candidateScore(r map[string]any, kind string, qs []string, year string) (float64, float64) {
+func candidateScore(r map[string]any, qs []string, year string) (float64, float64) {
 	likeness := 0.
 	for _, q := range qs {
 		likeness = max(likeness, similarity(q, recordTitle(r)), similarity(q, first(text(r, "original_title"), text(r, "original_name"))))
@@ -149,32 +153,115 @@ func (t *tmdbClient) artwork(ctx context.Context, raw, backdrop string) (string,
 	return raw, false
 }
 func (t *tmdbClient) lookup(ctx context.Context, p parsedMedia) (*metadataHit, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if t.config.APIKey == "" {
 		return nil, nil
 	}
 	key := cacheKey(p, t.config)
 	file := filepath.Join(t.cache, key+".json")
 	var cached cacheEntry
-	if readJSON(file, 65536, &cached) == nil && cached.Expires > time.Now().Unix() {
+	if readJSON(file, 65536, &cached) == nil && cached.Expires > t.clock().Unix() &&
+		(!p.TV || !t.config.EpisodeLookup || cached.Hit == nil || cached.Hit.RefreshAt > t.clock().Unix()) {
 		return cached.Hit, nil
 	}
 	hit, err := t.search(ctx, p)
 	if err != nil {
 		return nil, err
 	}
-	ttl := time.Duration(t.config.CacheDays) * 24 * time.Hour
-	if hit == nil {
-		ttl = time.Hour
-	} else if !hit.Complete {
-		ttl = 10 * time.Minute
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	body, _ := json.Marshal(cacheEntry{time.Now().Add(ttl).Unix(), hit})
+	body, _ := json.Marshal(cacheEntry{metadataExpiry(hit, t.config, t.clock()).Unix(), hit})
 	if atomicWrite(file, body, 0600) == nil {
-		trimMetadataCache(t.cache)
+		t.maintenance.afterWrite(t.cache)
 	}
 	return hit, nil
 }
 func (t *tmdbClient) search(ctx context.Context, p parsedMedia) (*metadataHit, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	match, err := t.match(ctx, p)
+	if err != nil || match == nil {
+		return nil, err
+	}
+	detail, id := match.detail, match.id
+	hit := &metadataHit{Title: recordTitle(detail), URL: "https://www.themoviedb.org/" + match.kind + "/" + fmt.Sprint(id), Complete: match.complete}
+	year := dateYear(first(text(detail, "release_date"), text(detail, "first_air_date")))
+	genres := []string{}
+	if values, ok := detail["genres"].([]any); ok {
+		for _, v := range values {
+			if r, ok := v.(map[string]any); ok && text(r, "name") != "" {
+				genres = append(genres, text(r, "name"))
+				if len(genres) == 2 {
+					break
+				}
+			}
+		}
+	}
+	hit.Subtitle = strings.Trim(strings.Join([]string{year, strings.Join(genres, ", ")}, " · "), " ·")
+	if match.kind == "tv" && p.TV {
+		hit.Episode = fmt.Sprintf("%02d", p.Episode)
+		if t.config.EpisodeLookup {
+			hit.RefreshAt = t.clock().Add(seasonCacheTTL).Unix()
+			season, e := t.season(ctx, id, p.Season)
+			if e != nil {
+				return nil, e
+			}
+			var episode map[string]any
+			if season != nil {
+				hit.RefreshAt = season.expires.Unix()
+				for _, record := range season.episodes {
+					if record.number == p.Episode && record.name != "" {
+						episode = map[string]any{"season_number": float64(p.Season), "episode_number": float64(record.number), "name": record.name, "still_path": record.still}
+						break
+					}
+				}
+			} else {
+				hit.Complete = false
+			}
+			// Some season responses omit usable records. Preserve exact-episode fallback.
+			if episode == nil {
+				episode, e = t.get(ctx, fmt.Sprintf("/tv/%d/season/%d/episode/%d", id, p.Season, p.Episode), url.Values{})
+				if e != nil {
+					return nil, e
+				}
+			}
+			if episode == nil {
+				hit.Complete = false
+			}
+			if episode != nil && int(number(episode, "season_number")) == p.Season && int(number(episode, "episode_number")) == p.Episode {
+				if season != nil && season.count >= p.Episode {
+					hit.Episode += fmt.Sprintf(" of %d", season.count)
+				}
+				if name := text(episode, "name"); name != "" {
+					hit.Episode += ": " + name
+				}
+				if still := imageURL(text(episode, "still_path"), "w780"); still != "" {
+					hit.Poster = still
+				}
+				hit.EpisodeURL = fmt.Sprintf("%s/season/%d/episode/%d", hit.URL, p.Season, p.Episode)
+			} else {
+				hit.Complete = false
+			}
+		}
+	}
+	// A usable episode still is sent directly; only fit/probe the fallback poster.
+	if hit.Poster == "" {
+		poster, complete := t.artwork(ctx, imageURL(text(detail, "poster_path"), "w500"), imageURL(text(detail, "backdrop_path"), "w780"))
+		hit.Poster, hit.Complete = poster, hit.Complete && complete
+	}
+	// Finished shows keep the configured positive-cache lifetime. Unknown or
+	// ongoing status uses the season's short expiry conservatively.
+	if hit.Complete && hit.RefreshAt != 0 && (text(detail, "status") == "Ended" || text(detail, "status") == "Canceled") {
+		hit.RefreshAt = t.clock().Add(time.Duration(t.config.CacheDays) * 24 * time.Hour).Unix()
+	}
+	return hit, nil
+}
+
+func (t *tmdbClient) resolveMatch(ctx context.Context, p parsedMedia) (*mediaMatch, error) {
 	qs := queries(p)
 	if len(qs) == 0 {
 		return nil, nil
@@ -200,7 +287,7 @@ func (t *tmdbClient) search(ctx context.Context, p parsedMedia) (*metadataHit, e
 			return
 		}
 		seen[key] = true
-		score, likeness := candidateScore(r, kind, qs, p.Year)
+		score, likeness := candidateScore(r, qs, p.Year)
 		entries = append(entries, candidate{kind, r, score, likeness})
 	}
 	var indexMatches map[string][][]int64
@@ -290,68 +377,7 @@ func (t *tmdbClient) search(ctx context.Context, p parsedMedia) (*metadataHit, e
 	if detail == nil {
 		detail = selected.record
 	}
-	hit := &metadataHit{Title: recordTitle(detail), URL: "https://www.themoviedb.org/" + selected.kind + "/" + fmt.Sprint(id), Complete: complete}
-	year := dateYear(first(text(detail, "release_date"), text(detail, "first_air_date")))
-	genres := []string{}
-	if values, ok := detail["genres"].([]any); ok {
-		for _, v := range values {
-			if r, ok := v.(map[string]any); ok && text(r, "name") != "" {
-				genres = append(genres, text(r, "name"))
-				if len(genres) == 2 {
-					break
-				}
-			}
-		}
-	}
-	hit.Subtitle = strings.Trim(strings.Join([]string{year, strings.Join(genres, ", ")}, " · "), " ·")
-	raw := imageURL(text(detail, "poster_path"), "w500")
-	hit.Poster, complete = t.artwork(ctx, raw, imageURL(text(detail, "backdrop_path"), "w780"))
-	hit.Complete = hit.Complete && complete
-	if selected.kind == "tv" && p.TV {
-		hit.Episode = fmt.Sprintf("%02d", p.Episode)
-		if t.config.EpisodeLookup {
-			season, e := t.season(ctx, id, p.Season)
-			if e != nil {
-				return nil, e
-			}
-			var episode map[string]any
-			if season != nil {
-				for _, record := range season.episodes {
-					if record.number == p.Episode && record.name != "" {
-						episode = map[string]any{"season_number": float64(p.Season), "episode_number": float64(record.number), "name": record.name, "still_path": record.still}
-						break
-					}
-				}
-			} else {
-				hit.Complete = false
-			}
-			// Some season responses omit usable records. Preserve exact-episode fallback.
-			if episode == nil {
-				episode, e = t.get(ctx, fmt.Sprintf("/tv/%d/season/%d/episode/%d", id, p.Season, p.Episode), url.Values{})
-				if e != nil {
-					return nil, e
-				}
-			}
-			if episode == nil {
-				hit.Complete = false
-			}
-			if episode != nil && int(number(episode, "season_number")) == p.Season && int(number(episode, "episode_number")) == p.Episode {
-				if season != nil && season.count >= p.Episode {
-					hit.Episode += fmt.Sprintf(" of %d", season.count)
-				}
-				if name := text(episode, "name"); name != "" {
-					hit.Episode += ": " + name
-				}
-				if still := imageURL(text(episode, "still_path"), "w780"); still != "" {
-					hit.Poster = still
-				}
-				hit.EpisodeURL = fmt.Sprintf("%s/season/%d/episode/%d", hit.URL, p.Season, p.Episode)
-			} else {
-				hit.Complete = false
-			}
-		}
-	}
-	return hit, nil
+	return &mediaMatch{kind: selected.kind, id: id, detail: detail, complete: complete}, nil
 }
 
 // Cache compact season records for sequential episodes, scoped to credentials,
@@ -366,6 +392,7 @@ type seasonEpisode struct {
 type seasonResponse struct {
 	count    int
 	episodes []seasonEpisode
+	expires  time.Time
 }
 type seasonKey struct {
 	base, language, credential string
@@ -375,7 +402,6 @@ type seasonKey struct {
 type seasonEntry struct {
 	key      seasonKey
 	response *seasonResponse
-	expires  time.Time
 }
 type seasonCache struct {
 	mu      sync.Mutex
@@ -398,7 +424,7 @@ func (c *seasonCache) get(key seasonKey) *seasonResponse {
 	defer c.mu.Unlock()
 	if item := c.entries[key]; item != nil {
 		entry := item.Value.(seasonEntry)
-		if c.clock().Before(entry.expires) {
+		if c.clock().Before(entry.response.expires) {
 			c.lru.MoveToFront(item)
 			return entry.response
 		}
@@ -420,7 +446,7 @@ func (c *seasonCache) put(key seasonKey, response *seasonResponse) {
 		delete(c.entries, key)
 		c.lru.Remove(old)
 	}
-	c.entries[key] = c.lru.PushFront(seasonEntry{key, response, c.clock().Add(seasonCacheTTL)})
+	c.entries[key] = c.lru.PushFront(seasonEntry{key, response})
 	if len(c.entries) > seasonCacheLimit {
 		oldest := c.lru.Back()
 		delete(c.entries, oldest.Value.(seasonEntry).key)
@@ -447,7 +473,12 @@ func (t *tmdbClient) season(ctx context.Context, show int64, season int) (*seaso
 	if !ok {
 		return nil, nil
 	}
-	response := &seasonResponse{count: len(records)}
+	response := &seasonResponse{count: len(records), expires: t.clock().Add(seasonCacheTTL)}
+	if t.seasons != nil {
+		response.expires = t.seasons.clock().Add(seasonCacheTTL)
+	}
+	// Persisted metadata and service scheduling use whole Unix seconds.
+	response.expires = response.expires.Truncate(time.Second)
 	for _, value := range records {
 		record, ok := value.(map[string]any)
 		if !ok || int(number(record, "season_number")) != season {
@@ -505,7 +536,7 @@ func clearMetadataCache(folder string) error {
 
 func trimMetadataCache(folder string) {
 	entries, err := os.ReadDir(folder)
-	if err != nil || len(entries) <= 4096 {
+	if err != nil || len(entries) <= metadataCacheLimit {
 		return
 	}
 	type item struct {
@@ -522,7 +553,7 @@ func trimMetadataCache(folder string) {
 		}
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].modified.Before(files[j].modified) })
-	for i := 0; i < len(files)-4096; i++ {
+	for i := 0; i < len(files)-metadataCacheLimit; i++ {
 		_ = os.Remove(files[i].path)
 	}
 }
