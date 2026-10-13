@@ -23,6 +23,7 @@ var releaseGroups = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^\s*subsplease\s*-\s*`),
 	regexp.MustCompile(`(?i)^\s*horriblesubs\s*-\s*`),
 }
+var leadingTitleBrackets = regexp.MustCompile(`^(?:\[[^\]]*\]\s*)+`)
 var titleSeparators = strings.NewReplacer(".", " ", "_", " ")
 var brackets = regexp.MustCompile(`\[[^\]]*\]`)
 var releaseTail = regexp.MustCompile(`[\s._\-]+([^\s._]+(?:[ .\-][^\s._]+)?)$`)
@@ -86,10 +87,6 @@ func extractYear(s string) (string, int) {
 	for _, loc := range yearToken.FindAllStringIndex(s, -1) {
 		a, b := loc[0], loc[1]
 		if a > 0 && s[a-1] >= '0' && s[a-1] <= '9' || b < len(s) && s[b] >= '0' && s[b] <= '9' {
-			continue
-		}
-		if a > 0 && s[a-1] == '(' && b < len(s) && s[b] == ')' {
-			year, start = s[a:b], a-1
 			continue
 		}
 		if trimTitle(strings.Trim(s[:a], " ._-")) != "" {
@@ -188,7 +185,7 @@ func similarity(a, b string) float64 {
 func queries(p parsedMedia) []string {
 	out := []string{}
 	seen := map[string]bool{}
-	for _, q := range []string{p.Title, strings.TrimSpace(regexp.MustCompile(`^(?:\[[^\]]*\]\s*)+`).ReplaceAllString(p.Title, "")), p.Directory, strings.TrimSpace(regexp.MustCompile(`^(?:\[[^\]]*\]\s*)+`).ReplaceAllString(p.Directory, ""))} {
+	for _, q := range []string{p.Title, strings.TrimSpace(leadingTitleBrackets.ReplaceAllString(p.Title, "")), p.Directory, strings.TrimSpace(leadingTitleBrackets.ReplaceAllString(p.Directory, ""))} {
 		key := normalizeMatch(q)
 		if key != "" && !seen[key] {
 			seen[key] = true

@@ -15,6 +15,14 @@ import (
 	"testing"
 )
 
+func indexCandidates(folder, title, kind string) []int64 {
+	r, err := openIndexReader(folder, kind)
+	if err != nil {
+		return nil
+	}
+	defer r.close()
+	return r.candidates(title, kind)
+}
 func exportData(kind string) []byte {
 	var b bytes.Buffer
 	w := gzip.NewWriter(&b)

@@ -14,7 +14,7 @@ import (
 )
 
 func exampleSnapshot() *Snapshot {
-	return &Snapshot{Version: 3, Updated: 100, ApplicationID: "123", Media: map[string]any{"title": "Movie", "state": "playing"}, Playback: map[string]any{"position": float64(20), "duration": float64(100), "rate": float64(2)}}
+	return &Snapshot{Version: 3, Updated: 100, Media: map[string]any{"title": "Movie", "state": "playing"}, Playback: map[string]any{"position": float64(20), "duration": float64(100), "rate": float64(2)}}
 }
 func TestActivityTimestampsPausedAndUTF8(t *testing.T) {
 	s := exampleSnapshot()

@@ -56,7 +56,10 @@ func TestStandaloneHTTPToDiscordAndPrivacy(t *testing.T) {
 			e := json.Unmarshal(raw, &value)
 			return value, e
 		}
-		if _, e := read(); e != nil {
+		if handshake, e := read(); e != nil {
+			return
+		} else if handshake["client_id"] != "123456789" {
+			t.Error("Discord handshake did not use the configured application ID:", handshake)
 			return
 		}
 		ready := []byte(`{"evt":"READY"}`)

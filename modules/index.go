@@ -131,14 +131,6 @@ func (r *indexReader) close() {
 	}
 	r.media = nil
 }
-func indexCandidates(folder, title, kind string) []int64 {
-	r, err := openIndexReader(folder, kind)
-	if err != nil {
-		return nil
-	}
-	defer r.close()
-	return r.candidates(title, kind)
-}
 func indexCandidateBatch(folder string, titles, kinds []string) map[string][][]int64 {
 	r, err := openIndexReader(folder, kinds...)
 	if err != nil {

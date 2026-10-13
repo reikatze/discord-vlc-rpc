@@ -10,7 +10,6 @@ import (
 )
 
 type vlcProcess struct {
-	pid      int
 	exe, cwd string
 	args     []string
 	env      map[string]string

@@ -70,7 +70,7 @@ func runningVLCProcesses() ([]vlcProcess, error) {
 		size := uint32(len(buf))
 		e = windows.QueryFullProcessImageName(h, 0, &buf[0], &size)
 		if e == nil {
-			p := vlcProcess{pid: int(entry.ProcessID), exe: windows.UTF16ToString(buf[:size])}
+			p := vlcProcess{exe: windows.UTF16ToString(buf[:size])}
 			// ProcessCommandLineInformation returns a local UNICODE_STRING and its buffer.
 			raw := make([]byte, 131072)
 			var length uint32

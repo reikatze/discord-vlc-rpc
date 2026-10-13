@@ -5,12 +5,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"runtime"
 	"strconv"
@@ -69,39 +67,20 @@ func httpConfigured(options map[string]string) bool {
 	return local && hasHTTP(options["extraintf"]) && options["http-password"] != "" && (port == "" || strconv.Itoa(httpPort(options)) == port)
 }
 func probeVLCHTTP(ctx context.Context, options map[string]string) error {
-	transport := &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: time.Second}).DialContext}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	host := "127.0.0.1"
-	if options["http-host"] == "::1" {
-		host = "::1"
-	}
-	request, err := http.NewRequestWithContext(ctx, "GET", "http://"+net.JoinHostPort(host, strconv.Itoa(httpPort(options)))+"/requests/status.json", nil)
-	if err != nil {
+	client := localHTTPClient()
+	defer client.CloseIdleConnections()
+	var status vlcIdentity
+	if err := vlcHTTPWithPolicy(ctx, client, options, "status.json", &status, vlcHTTPPolicy{
+		limit:        32768,
+		unavailable:  "VLC HTTP interface is not reachable",
+		unauthorized: "VLC HTTP authentication failed; restart VLC to use its saved password",
+		status:       "VLC HTTP endpoint did not return playback status",
+		body:         "VLC HTTP status response is invalid",
+		json:         "The local HTTP endpoint is not a VLC status interface",
+	}); err != nil {
 		return err
 	}
-	request.SetBasicAuth("", options["http-password"])
-	response, err := client.Do(request)
-	if err != nil {
-		return errors.New("VLC HTTP interface is not reachable")
-	}
-	defer response.Body.Close()
-	if response.StatusCode == http.StatusUnauthorized {
-		return errors.New("VLC HTTP authentication failed; restart VLC to use its saved password")
-	}
-	if response.StatusCode != http.StatusOK {
-		return errors.New("VLC HTTP endpoint did not return playback status")
-	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, 32769))
-	if err != nil || len(body) > 32768 {
-		return errors.New("VLC HTTP status response is invalid")
-	}
-	var status struct {
-		State   string `json:"state"`
-		Version string `json:"version"`
-		API     int    `json:"apiversion"`
-	}
-	if json.Unmarshal(body, &status) != nil || status.Version == "" || status.API < 1 {
+	if !status.valid() {
 		return errors.New("The local HTTP endpoint is not a VLC status interface")
 	}
 	switch status.State {

@@ -45,7 +45,7 @@ func linuxVLCProcesses(procRoot string, uid uint32) ([]vlcProcess, error) {
 	}
 	var found []vlcProcess
 	for _, entry := range entries {
-		pid, err := strconv.Atoi(entry.Name())
+		_, err := strconv.Atoi(entry.Name())
 		if err != nil {
 			continue
 		}
@@ -80,7 +80,7 @@ func linuxVLCProcesses(procRoot string, uid uint32) ([]vlcProcess, error) {
 				exe = mounted
 			}
 		}
-		found = append(found, vlcProcess{pid: pid, exe: exe, cwd: cwd, args: args, env: profileEnvironment(env)})
+		found = append(found, vlcProcess{exe: exe, cwd: cwd, args: args, env: profileEnvironment(env)})
 	}
 	return found, nil
 }

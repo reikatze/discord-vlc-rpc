@@ -177,8 +177,7 @@ func (s *service) run(parent context.Context) error {
 		case <-s.refresh:
 			forceReload = true
 			poll.success()
-			cancelLookup()
-			key = ""
+			invalidateLookup()
 		case <-s.buildIndex:
 			nextIndex = time.Time{}
 			forceIndex = true
@@ -242,8 +241,7 @@ func (s *service) run(parent context.Context) error {
 		if !c.Enabled || noPresence {
 			client.clock = playbackClock{}
 			poll.delay = 5 * time.Second
-			cancelLookup()
-			key = ""
+			invalidateLookup()
 			hit = nil
 			publish(nil)
 			s.state("Presence disabled", "", "")
@@ -252,8 +250,7 @@ func (s *service) run(parent context.Context) error {
 		options, e, _ := vlcCache.read(forceReload)
 		if e != nil {
 			client.clock = playbackClock{}
-			cancelLookup()
-			key = ""
+			invalidateLookup()
 			hit = nil
 			publish(nil)
 			poll.failed()
@@ -263,8 +260,7 @@ func (s *service) run(parent context.Context) error {
 		snapshot, parsed, e := client.sample(ctx, options, c)
 		if e != nil {
 			client.clock = playbackClock{}
-			cancelLookup()
-			key = ""
+			invalidateLookup()
 			hit = nil
 			publish(nil)
 			poll.failed()
@@ -276,8 +272,7 @@ func (s *service) run(parent context.Context) error {
 			poll.stopped()
 		}
 		if snapshot == nil {
-			cancelLookup()
-			key = ""
+			invalidateLookup()
 			hit = nil
 			publish(nil)
 			s.state("Stopped, ignored or network media", "", "")
@@ -285,8 +280,7 @@ func (s *service) run(parent context.Context) error {
 		}
 		uri := text(snapshot.Media, "uri")
 		if uri == "" {
-			cancelLookup()
-			key = ""
+			invalidateLookup()
 			hit = nil
 			chapters = nil
 			publish(makeActivity(snapshot))
@@ -295,7 +289,7 @@ func (s *service) run(parent context.Context) error {
 		}
 		currentKey := uri + "\x00" + cacheKey(parsed, lookupConfig)
 		if currentKey != key {
-			cancelLookup()
+			invalidateLookup()
 			key = currentKey
 			hit = nil
 			chapters = nil

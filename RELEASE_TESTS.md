@@ -153,3 +153,12 @@ and release after both normal process exit and forced termination. The lock file
 remains in place and its existence does not imply a running instance. No TCP
 listener is used for single-instance protection. Native macOS/Windows runtime
 validation remains necessary; this host verifies Linux behavior and cross-builds.
+
+Source cleanup removes unused snapshot application IDs, status positions, stored
+process IDs, and unpopulated chapter-map fallbacks. Filename parsing reuses the
+leading-bracket expression and removes an unreachable year branch. Discord frame
+writes use bytes.NewReader, and single-title index helpers live only in tests.
+Lookup invalidation cancels each old request once across concurrent reasons. Shared
+VLC HTTP tests verify setup/playback response limits, existing error messages,
+identity decoding, authentication, redirects and deadlines. The HTTP-to-Discord
+integration test verifies the configured application ID directly at handshake.

@@ -10,7 +10,8 @@ command-line options, startup discovery and shutdown behavior.
 |---|---|
 | `app.go` | Application startup, tray menu and shutdown |
 | `service.go` | Playback polling and background-job coordination |
-| `playback.go`, `model.go` | VLC HTTP responses, chapter lookup and presence data |
+| `playback.go`, `model.go` | Playback sampling, chapter lookup and presence data |
+| `vlc_http.go` | Shared VLC HTTP transport, authentication, bounded JSON decoding and endpoint identity |
 | `filename.go` | Filename parsing and title matching |
 | `metadata.go`, `index.go` | TMDb requests, metadata caching and local title indexes |
 | `rpc.go`, `rpc_*.go` | Discord IPC and reconnection |

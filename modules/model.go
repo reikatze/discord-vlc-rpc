@@ -6,14 +6,13 @@ import (
 )
 
 type Snapshot struct {
-	Version       int               `json:"version"`
-	Updated       float64           `json:"updated"`
-	ApplicationID string            `json:"application_id"`
-	Media         map[string]any    `json:"media"`
-	Options       map[string]string `json:"options"`
-	Playback      map[string]any    `json:"playback"`
-	Timestamps    map[string]int64  `json:"-"`
-	ChapterTitle  string            `json:"chapter_title"`
+	Version      int               `json:"version"`
+	Updated      float64           `json:"updated"`
+	Media        map[string]any    `json:"media"`
+	Options      map[string]string `json:"options"`
+	Playback     map[string]any    `json:"playback"`
+	Timestamps   map[string]int64  `json:"-"`
+	ChapterTitle string            `json:"chapter_title"`
 }
 
 func text(m map[string]any, key string) string    { s, _ := m[key].(string); return s }
@@ -51,8 +50,8 @@ func makeActivity(s *Snapshot) map[string]any {
 	case "idle":
 		state = "Idle"
 	}
-	chapter := first(s.ChapterTitle, text(media, "chapter_title"))
-	episode := first(text(playback, "chapter_base"), text(media, "episode"))
+	chapter := s.ChapterTitle
+	episode := text(media, "episode")
 	eligible, exists := playback["chapter_eligible"].(bool)
 	if chapter != "" && (!exists || eligible) {
 		if episode != "" {

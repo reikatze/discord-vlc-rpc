@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,12 +17,10 @@ import (
 )
 
 type vlcStatus struct {
-	Version                      string `json:"version"`
-	API                          int    `json:"apiversion"`
-	State                        string `json:"state"`
-	Time, Position, Length, Rate float64
-	Current                      int `json:"currentplid"`
-	Information                  struct {
+	vlcIdentity
+	Time, Length, Rate float64
+	Current            int `json:"currentplid"`
+	Information        struct {
 		Category map[string]map[string]any `json:"category"`
 		Chapter  int                       `json:"chapter"`
 		Chapters json.RawMessage           `json:"chapters"`
@@ -45,39 +41,6 @@ type playbackClient struct {
 	now           func() time.Time
 }
 
-func localHTTPClient() *http.Client {
-	return &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: time.Second}).DialContext}, Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-}
-func vlcHTTP(ctx context.Context, client *http.Client, options map[string]string, endpoint string, target any) error {
-	host := "127.0.0.1"
-	if options["http-host"] == "::1" {
-		host = "::1"
-	}
-	request, err := http.NewRequestWithContext(ctx, "GET", "http://"+net.JoinHostPort(host, fmt.Sprint(httpPort(options)))+"/requests/"+endpoint, nil)
-	if err != nil {
-		return err
-	}
-	request.SetBasicAuth("", options["http-password"])
-	r, err := client.Do(request)
-	if err != nil {
-		return errors.New("VLC HTTP unavailable")
-	}
-	defer r.Body.Close()
-	if r.StatusCode == 401 {
-		return errors.New("VLC HTTP password rejected; restart VLC")
-	}
-	if r.StatusCode != 200 {
-		return errors.New("VLC HTTP status failed")
-	}
-	b, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024+1))
-	if err != nil || len(b) > 1024*1024 {
-		return errors.New("VLC HTTP response exceeds limit")
-	}
-	if json.Unmarshal(b, target) != nil {
-		return errors.New("Invalid VLC HTTP JSON")
-	}
-	return nil
-}
 func findURI(n playlistNode, id int) string {
 	if n.ID.String() == fmt.Sprint(id) && n.URI != "" {
 		return n.URI
@@ -134,13 +97,13 @@ func (c *playbackClient) sample(ctx context.Context, options map[string]string, 
 		c.uri = ""
 		return nil, parsedMedia{}, err
 	}
-	if status.Version == "" || status.API < 1 {
+	if !status.valid() {
 		return nil, parsedMedia{}, errors.New("Endpoint is not VLC")
 	}
 	if status.State == "stopped" {
 		c.clock = playbackClock{}
 		c.uri = ""
-		return &Snapshot{Version: 3, Updated: float64(c.time().UnixNano()) / 1e9, ApplicationID: config.discordApplicationID(), Media: map[string]any{"title": "VLC", "state": "idle"}, Playback: map[string]any{}, Options: activityOptions(config)}, parsedMedia{}, nil
+		return &Snapshot{Version: 3, Updated: float64(c.time().UnixNano()) / 1e9, Media: map[string]any{"title": "VLC", "state": "idle"}, Playback: map[string]any{}, Options: activityOptions(config)}, parsedMedia{}, nil
 	}
 	if status.State != "playing" && status.State != "paused" && status.State != "buffering" {
 		return nil, parsedMedia{}, errors.New("Unknown VLC playback state")
@@ -171,7 +134,7 @@ func (c *playbackClient) sample(ctx context.Context, options map[string]string, 
 	if title == "" {
 		title = filepath.Base(path)
 	}
-	s := &Snapshot{Version: 3, Updated: float64(c.time().UnixNano()) / 1e9, ApplicationID: config.discordApplicationID(), Media: map[string]any{"uri": c.uri, "title": title, "state": status.State, "artist": text(meta, "artist")}, Playback: map[string]any{"position": status.Time, "duration": status.Length, "rate": status.Rate}, Options: activityOptions(config)}
+	s := &Snapshot{Version: 3, Updated: float64(c.time().UnixNano()) / 1e9, Media: map[string]any{"uri": c.uri, "title": title, "state": status.State, "artist": text(meta, "artist")}, Playback: map[string]any{"position": status.Time, "duration": status.Length, "rate": status.Rate}, Options: activityOptions(config)}
 	if parsed.TV {
 		s.Media["episode"] = fmt.Sprintf("S%02d · Episode %02d", parsed.Season, parsed.Episode)
 	}

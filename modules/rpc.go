@@ -1,6 +1,7 @@
 package modules
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -38,21 +39,10 @@ func (r *discordRPC) send(op uint32, value any) error {
 	binary.LittleEndian.PutUint32(header, op)
 	binary.LittleEndian.PutUint32(header[4:], uint32(len(body)))
 	r.connection.SetWriteDeadline(time.Now().Add(time.Second))
-	_, err = io.Copy(r.connection, bytesReader(append(header, body...)))
+	_, err = io.Copy(r.connection, bytes.NewReader(append(header, body...)))
 	return err
 }
 
-type byteReader struct{ b []byte }
-
-func bytesReader(b []byte) *byteReader { return &byteReader{b} }
-func (b *byteReader) Read(p []byte) (int, error) {
-	if len(b.b) == 0 {
-		return 0, io.EOF
-	}
-	n := copy(p, b.b)
-	b.b = b.b[n:]
-	return n, nil
-}
 func (r *discordRPC) receive(timeout time.Duration) (map[string]any, error) {
 	r.connection.SetReadDeadline(time.Now().Add(timeout))
 	header := make([]byte, 8)
