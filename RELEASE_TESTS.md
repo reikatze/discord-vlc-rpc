@@ -162,3 +162,25 @@ Lookup invalidation cancels each old request once across concurrent reasons. Sha
 VLC HTTP tests verify setup/playback response limits, existing error messages,
 identity decoding, authentication, redirects and deadlines. The HTTP-to-Discord
 integration test verifies the configured application ID directly at handshake.
+
+## Real playback and native IPC workflow checks
+
+The three-platform workflow installs VLC and explicitly enables required integration
+tests with `DISCORD_VLC_RPC_INTEGRATION=1`. Tests generate a local PCM WAV and
+launch real VLC with dummy audio/video output, isolated configuration, and
+authenticated loopback HTTP. They verify incorrect-password rejection, playback
+media detection, pause, seek, resume timestamps, stop/idle, disabling presence,
+and shutdown clearing through production Discord socket/pipe discovery.
+
+Native mocks listen on Windows named pipes or macOS/Linux Unix-domain sockets.
+They verify handshake, deduplication, clearing, disconnect/reconnect replay and
+a bounded handshake timeout. The mock harness also runs over TCP in the ordinary
+suite. Integration checks skip unless explicitly enabled, but fail when enabled
+and VLC or native IPC is unavailable. All jobs continue independently after a
+platform failure, and have bounded job/process/test timeouts.
+
+This editing host forbids Unix-domain sockets and privilege changes, and runs as
+root, so native IPC and real VLC execution cannot be validated here. The ordinary
+suite and cross-compilation checks validate the harness and test code; native
+runtime verification is delegated to the workflow. Tray UI and live Discord
+account presence remain desktop release checks.
